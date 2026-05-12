@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from app.services.face_service import face_service; print\\('OK:', face_service.use_sface\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"from app.services.face_service import face_service; print\\('Import OK'\\); print\\('use_sface:', face_service.use_sface\\)\")",
+      "Bash(npx vite *)",
+      "Bash(netstat -ano)",
+      "Bash(curl *)",
+      "Bash(python -m json.tool)",
+      "Bash(npm run *)",
+      "Bash(python -c \"import json,sys; data=json.load\\(sys.stdin\\); print\\(f'共{len\\(data\\)}条记录'\\); [print\\(f'  {s[\\\\\"student_no\\\\\"]} {s[\\\\\"name\\\\\"]} face_url={s[\\\\\"face_image_url\\\\\"]}'\\) for s in data[:3]]\")",
+      "Bash(pip install *)",
+      "Bash(python *)",
+      "Bash(pip list *)",
+      "Bash(KERAS_BACKEND=tensorflow python -c \"from deepface import DeepFace; print\\('DeepFace available'\\)\")",
+      "Bash(findstr :8000)",
+      "Bash(taskkill /F /PID 76116)",
+      "Bash(taskkill /F /PID 82524)",
+      "Bash(taskkill /F /PID 76880)",
+      "Bash(taskkill /F /PID 76256)",
+      "Bash(uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload)",
+      "Bash(taskkill /f /im python.exe)",
+      "Bash(taskkill /f /im uvicorn.exe)",
+      "Bash(powershell *)"
+    ]
+  }
+}

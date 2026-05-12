@@ -1,0 +1,45 @@
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session, joinedload
+
+from app.api.deps import get_current_user
+from app.core.database import get_db
+from app.models.emotion import EmotionRecord
+from app.models.student import Student
+from app.models.user import User
+
+
+router = APIRouter(prefix="/emotions", tags=["情绪记录"])
+
+
+@router.get("/records")
+def emotion_records(
+    keyword: str = "",
+    source: str = "",
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """查询情绪明细，满足 PPT 对学号、姓名、时间、情绪类型完整记录的要求。"""
+
+    query = db.query(EmotionRecord).options(joinedload(EmotionRecord.student))
+    if user.role == "student" and user.student_id:
+        query = query.filter(EmotionRecord.student_id == user.student_id)
+    if source:
+        query = query.filter(EmotionRecord.source == source)
+    if keyword:
+        query = query.join(Student, isouter=True).filter((Student.name.contains(keyword)) | (Student.student_no.contains(keyword)))
+    rows = query.order_by(EmotionRecord.timestamp.desc()).limit(limit).all()
+    return [
+        {
+            "id": row.id,
+            "timestamp": row.timestamp,
+            "student_id": row.student.id if row.student else None,
+            "student_no": row.student.student_no if row.student else "",
+            "name": row.student.name if row.student else "",
+            "class_name": row.student.class_name if row.student else "",
+            "emotion_type": row.emotion_type,
+            "confidence": row.confidence,
+            "source": row.source,
+        }
+        for row in rows
+    ]

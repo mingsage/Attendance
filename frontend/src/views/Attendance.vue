@@ -1,0 +1,431 @@
+<template>
+  <div class="page">
+    <div class="toolbar">
+      <h2>考勤识别</h2>
+      <div class="toolbar-right">
+        <el-input v-model="courseName" class="course-input" placeholder="课程名称" clearable />
+        <el-switch
+          v-model="livenessEnabled"
+          active-text="活体检测"
+          inactive-text="活体检测关"
+          @change="saveLiveness"
+        />
+      </div>
+    </div>
+
+    <div class="section camera-section">
+      <div class="camera-wrapper">
+        <video ref="videoRef" class="camera" autoplay muted playsinline @loadedmetadata="onVideoReady" />
+        <canvas ref="overlayRef" class="camera-overlay" v-show="cameraActive" />
+        <!-- 人脸引导框 -->
+        <div v-if="cameraActive" class="face-guide">
+          <svg viewBox="0 0 200 260" class="guide-svg">
+            <ellipse cx="100" cy="130" rx="75" ry="95" fill="none"
+              :stroke="faceDetected ? '#10b981' : 'rgba(255,255,255,0.4)'"
+              stroke-width="2.5" stroke-dasharray="6 4"
+              class="guide-ellipse" />
+          </svg>
+          <span class="guide-text" :class="{ detected: faceDetected }">
+            {{ faceDetected ? '人脸已检测' : '请将面部对准椭圆区域' }}
+          </span>
+        </div>
+        <div v-else class="camera-placeholder">
+          <el-icon :size="48"><VideoCamera /></el-icon>
+          <p>点击下方按钮开启摄像头</p>
+        </div>
+      </div>
+
+      <!-- 提示 -->
+      <el-alert
+        v-if="livenessEnabled && challenge.text"
+        :title="challenge.text"
+        type="warning"
+        :closable="false"
+        show-icon
+      />
+      <el-alert
+        v-else
+        title="请保持正脸、光线充足，尽量靠近摄像头"
+        type="info"
+        :closable="false"
+        show-icon
+      />
+
+      <!-- 操作按钮 -->
+      <div class="actions">
+        <el-button :icon="VideoCamera" @click="startCamera">
+          {{ cameraActive ? '切换摄像头' : '开启摄像头' }}
+        </el-button>
+        <el-button :icon="Refresh" :disabled="!livenessEnabled" @click="loadChallenge">
+          刷新动作
+        </el-button>
+        <el-button v-if="cameraActive" type="success" :icon="Check" :loading="loading" class="capture-btn" @click="captureAndSubmit">
+          完成考勤
+        </el-button>
+        <el-button :icon="Timer" :disabled="autoCapturing" @click="autoCapture">
+          3 秒自动拍照
+        </el-button>
+      </div>
+
+      <!-- 步骤指示 -->
+      <el-steps :active="statusStep" finish-status="success" simple class="steps">
+        <el-step title="摄像头" />
+        <el-step :title="livenessEnabled ? '活体动作' : '跳过活体'" />
+        <el-step title="人脸识别" />
+        <el-step title="结果" />
+      </el-steps>
+
+      <!-- 结果展示 -->
+      <transition name="fade">
+        <div v-if="result" class="result-panel">
+          <el-alert
+            :title="result.message"
+            :type="result.success ? 'success' : 'error'"
+            show-icon
+            :closable="false"
+          />
+          <el-descriptions v-if="result.record" :column="3" border class="result-box">
+            <el-descriptions-item label="学号" :span="1">
+              <span style="font-weight:600">{{ result.record.student?.student_no || '-' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="姓名">
+              <span style="font-weight:600">{{ result.record.student?.name || '-' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="性别">
+              {{ result.record.student?.gender || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="班级">
+              {{ result.record.student?.class_name || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="置信度">
+              <span :style="{ color: (result.record.confidence || 0) >= 0.68 ? '#10b981' : '#ef4444', fontWeight: 600 }">
+                {{ (result.record.confidence * 100).toFixed(1) }}%
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="情绪">
+              <span v-if="result.record.emotion_type && result.record.emotion_type !== 'neutral'">
+                {{ emotionIcon(result.record.emotion_type) }}
+                {{ result.record.emotion_type }}
+              </span>
+              <span v-else>-</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="活体分">
+              {{ result.record.liveness_score?.toFixed(3) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="课程">{{ result.record.course_name }}</el-descriptions-item>
+            <el-descriptions-item label="时间">{{ formatTime(result.record.timestamp) }}</el-descriptions-item>
+            <el-descriptions-item label="人脸照片数">
+              <el-tag v-if="result.record.student?.face_sample_count" size="small" type="info">
+                {{ result.record.student.face_sample_count }} 张
+              </el-tag>
+              <span v-else>-</span>
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+      </transition>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Check, Refresh, Timer, VideoCamera } from '@element-plus/icons-vue'
+import { attendanceApi } from '../api/modules'
+
+const videoRef = ref()
+const overlayRef = ref()
+const courseName = ref('默认课程')
+const loading = ref(false)
+const result = ref(null)
+const statusStep = ref(0)
+const autoCapturing = ref(false)
+const livenessEnabled = ref(false)
+const cameraActive = ref(false)
+const faceDetected = ref(false)
+const challenge = reactive({ action: '', text: '' })
+
+let cameraStream = null
+let detectInterval = null
+
+const EMOTION_ICONS = {
+  happy: '😊',
+  sad: '😢',
+  angry: '😠',
+  surprised: '😮',
+  fearful: '😨',
+  disgusted: '🤢',
+  neutral: '😐',
+}
+
+function emotionIcon(type) {
+  return EMOTION_ICONS[type] || ''
+}
+
+function formatTime(ts) {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+async function startCamera() {
+  // 清除旧流
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((t) => t.stop())
+    cameraStream = null
+    if (detectInterval) {
+      clearInterval(detectInterval)
+      detectInterval = null
+    }
+  }
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        facingMode: 'user',
+      },
+      audio: false,
+    })
+    videoRef.value.srcObject = cameraStream
+    cameraActive.value = true
+    faceDetected.value = false
+    statusStep.value = 1
+  } catch {
+    ElMessage.error('摄像头启动失败，请检查浏览器权限')
+  }
+}
+
+function onVideoReady() {
+  // 简单人脸检测模拟：基于运动检测或亮度来判断画面中是否有人
+  // 实际应用中可用更复杂的方法，此处用亮度变化简单判断
+  startFaceDetection()
+}
+
+function startFaceDetection() {
+  if (detectInterval) clearInterval(detectInterval)
+  detectInterval = setInterval(() => {
+    const video = videoRef.value
+    if (!video?.videoWidth) return
+    // 取中心区域亮度方差判断是否有面部（非精确，仅用于引导提示）
+    const canvas = document.createElement('canvas')
+    canvas.width = 160
+    canvas.height = 120
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(video, 0, 0, 160, 120)
+    const imageData = ctx.getImageData(0, 0, 160, 120)
+    const pixels = imageData.data
+    let sum = 0
+    for (let i = 0; i < pixels.length; i += 4) {
+      sum += pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114
+    }
+    const avg = sum / (pixels.length / 4)
+    // 计算中心区域方差（人脸通常有对比度）
+    let variance = 0
+    for (let i = 0; i < pixels.length; i += 4) {
+      const gray = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114
+      variance += (gray - avg) ** 2
+    }
+    variance /= pixels.length / 4
+    faceDetected.value = variance > 1500 && avg > 30 && avg < 230
+  }, 500)
+}
+
+async function submit(file) {
+  loading.value = true
+  statusStep.value = 2
+  result.value = null
+  try {
+    const { data } = await attendanceApi.checkIn(file, courseName.value)
+    result.value = data
+    statusStep.value = 4
+    if (data.success) {
+      ElMessage.success(data.message)
+    } else {
+      ElMessage.error(data.message)
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+function captureAndSubmit() {
+  const video = videoRef.value
+  if (!video?.videoWidth) {
+    ElMessage.warning('请先开启摄像头')
+    return
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
+  canvas.toBlob((blob) => {
+    if (!blob) {
+      ElMessage.error('拍照失败')
+      return
+    }
+    submit(new File([blob], 'check-in.jpg', { type: 'image/jpeg' }))
+  }, 'image/jpeg', 0.95)
+}
+
+async function loadChallenge() {
+  const { data } = await attendanceApi.challenge()
+  Object.assign(challenge, data)
+  livenessEnabled.value = Boolean(data.enabled)
+  statusStep.value = Math.max(statusStep.value, 1)
+}
+
+async function loadLivenessSettings() {
+  const { data } = await attendanceApi.livenessSettings()
+  livenessEnabled.value = data.enabled
+  await loadChallenge()
+}
+
+async function saveLiveness(value) {
+  const { data } = await attendanceApi.updateLivenessSettings(value)
+  livenessEnabled.value = data.enabled
+  await loadChallenge()
+  ElMessage.success(data.enabled ? '活体检测已开启' : '活体检测已关闭')
+}
+
+async function autoCapture() {
+  if (!videoRef.value?.videoWidth) await startCamera()
+  autoCapturing.value = true
+  statusStep.value = 2
+  ElMessage.info(livenessEnabled.value ? '请按提示完成动作，3 秒后自动拍照' : '3 秒后自动拍照')
+  setTimeout(() => {
+    autoCapturing.value = false
+    captureAndSubmit()
+  }, 3000)
+}
+
+onMounted(loadLivenessSettings)
+
+onBeforeUnmount(() => {
+  if (detectInterval) clearInterval(detectInterval)
+  cameraStream?.getTracks().forEach((t) => t.stop())
+})
+</script>
+
+<style scoped>
+.toolbar-right,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.course-input {
+  width: 220px;
+}
+
+.camera-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.camera-wrapper {
+  position: relative;
+  width: min(100%, 860px);
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #111827;
+  align-self: center;
+}
+
+.camera {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.camera-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.camera-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.4);
+  gap: 12px;
+}
+
+.camera-placeholder p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* 人脸引导框 */
+.face-guide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.guide-svg {
+  width: 180px;
+  height: 240px;
+}
+
+.guide-ellipse {
+  transition: stroke 0.3s ease;
+}
+
+.guide-text {
+  position: absolute;
+  bottom: 18%;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(0, 0, 0, 0.5);
+  padding: 4px 14px;
+  border-radius: 20px;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.guide-text.detected {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.actions {
+  margin: 4px 0;
+}
+
+.capture-btn {
+  font-weight: 600;
+  padding: 10px 22px;
+}
+
+.steps {
+  margin-bottom: 4px;
+}
+
+.result-box {
+  margin-top: 12px;
+}
+
+.result-panel {
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</style>
