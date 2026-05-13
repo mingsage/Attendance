@@ -1,66 +1,86 @@
 # 班级考勤系统
 
-基于 **FastAPI + Vue 3** 的智能人脸识别考勤管理平台，支持单人或合照批量签到、活体检测、情绪分析、课程统计与 Excel 导出。
+基于 **FastAPI + Vue 3** 的智能人脸识别考勤管理平台，支持单人或合照批量签到、11 维活体检测、情绪分析、课程统计与 Excel 导出。
 
 ## 功能
 
-- **人脸签到** — 上传照片自动检测人脸、提取特征、比对数据库完成签到
-- **活体检测** — 签到时可开启活体检测（眨眼、转头、张嘴），防止照片/视频伪造
-- **合照识别** — 上传班级合照，一键识别所有已录入人脸的学生并批量生成考勤记录
-- **情绪分析** — 签到同时检测七类情绪（happy、sad、angry 等）并记录
-- **学生管理** — 学生信息的增删改查，支持单张或批量（文件名解析）导入人脸照片
-- **人脸库重建** — 在已保存照片基础上批量重建人脸特征向量
-- **课程考勤统计** — 按课程和日期的出勤统计，支持导出 Excel
-- **情绪统计** — 全局情绪分布概览
-- **活动参与统计** — 活动识别记录汇总
-- **数据导出** — 考勤记录和统计报表一键导出为 xlsx
+- **人脸签到** — 拍照/上传，自动检测人脸、提取 ArcFace 512d 特征、比对数据库完成签到
+- **活体检测** — 11 维综合评分：rPPG 脉搏波 + 摩尔纹检测 + 光流时序 + DeepFace MiniFASNet + 动态阈值
+- **动作挑战** — 随机动作（微笑/转头/张嘴），InsightFace 5 关键点精确验证
+- **合照识别** — 上传班级合照，SCRFD 检测 + ArcFace 批量识别 + 自动写入活动参与记录
+- **情绪分析** — HSEmotion (EfficientNet-B0) + DeepFace + OpenCV 三引擎混合，7 类情绪分类
+- **学生管理** — 增删改查，单张/批量（文件名解析）导入人脸，512d 特征加权合并
+- **课程考勤统计** — 按课程和日期的出勤统计，应到/实到/缺勤/到课率，支持 Excel 导出
+- **情绪统计** — ECharts 饼图 + 明细记录表
+- **活动参与统计** — 合照识别自动记录活动次数
 
 ## 技术栈
 
 | 层 | 技术 |
 | --- | --- |
-| 后端框架 | FastAPI + SQLAlchemy + Pydantic |
-| 数据库 | SQLite（可切换） |
-| 人脸识别 | OpenCV + face_recognition |
-| 活体检测 | OpenCV 动作分析 |
-| 情绪识别 | 基于面部特征分类 |
+| 后端框架 | FastAPI + SQLAlchemy 2.x + Pydantic v2 |
+| 数据库 | SQLite（可切换 PostgreSQL） |
+| 人脸检测 | InsightFace SCRFD-10GF |
+| 人脸识别 | InsightFace ArcFace ResNet50 (512d) |
+| 活体检测 | 11 维：rPPG + 摩尔纹 + 光流 + DeepFace + 传统 CV |
+| 情绪识别 | HSEmotion EfficientNet-B0 + DeepFace + OpenCV 三引擎 |
 | 前端框架 | Vue 3 + Vite |
 | UI 组件 | Element Plus |
-| 状态管理 | Pinia |
 | 图表 | ECharts |
-| HTTP 客户端 | Axios |
+| HTTP | Axios |
+
+## 环境要求
+
+| 依赖 | 说明 |
+| --- | --- |
+| Python 3.9+ | 后端运行环境 |
+| Node.js 18+ | 前端构建 |
+| 摄像头 | 浏览器需授权摄像头访问 |
+| 磁盘空间 | ~2GB（含 InsightFace buffalo_l 326MB + DeepFace 模型 + PyTorch） |
 
 ## 快速启动
 
-### 后端
+### 1. 后端
 
 ```bash
 cd backend
 
-# 安装依赖
+# 安装依赖（含 InsightFace / DeepFace / HSEmotion / PyTorch）
 pip install -r requirements.txt
 
-# 启动服务（监听 8000 端口）
+# 启动服务
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-首次启动会自动创建 SQLite 数据库文件和默认教师账号。
+> **注意**：首次启动时 InsightFace 会自动下载 buffalo_l 模型包（~326MB）到 `~/.insightface/`，HSEmotion 会自动下载 `enet_b0_8_best_afew.pt`（~20MB）到 `~/.hsemotion/`。需保证网络通畅。
 
-### 前端
+### 2. 前端
 
 ```bash
 cd frontend
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
 npm run dev
+# → http://127.0.0.1:5173
 ```
 
-默认在 `http://127.0.0.1:5173` 启动。
+### 3. 初始化
 
-### 默认登录账号
+1. 浏览器打开 `http://127.0.0.1:5173`
+2. 用教师账号登录：`teacher` / `123456`
+3. 进入「学生管理」→「批量导入人脸」批量录入学生照片
+4. 或进入「学生管理」→「新增学生」→「录入人脸」逐个录入
+5. 切换「考勤识别」页面，开启摄像头即可签到
+
+### 4. 人脸特征重建（首次升级必须）
+
+如果数据库中已有学生（128d 旧特征），需要运行重建接口升级到 512d：
+
+```bash
+curl -X POST http://localhost:8000/api/students/faces/rebuild \
+  -H "Authorization: Bearer <token>"
+```
+
+### 默认账号
 
 | 角色 | 用户名 | 密码 |
 | --- | --- | --- |
@@ -71,19 +91,45 @@ npm run dev
 ```
 backend/
 ├── app/
-│   ├── api/           # 路由层：auth / students / attendance / emotions / statistics / group_photo
-│   ├── core/          # 配置、数据库引擎、安全工具
-│   ├── models/        # SQLAlchemy ORM 模型
-│   ├── schemas/       # Pydantic 请求/响应模型
-│   └── services/      # 业务服务：人脸识别、活体检测、情绪分析、导出、图片工具
-├── database/          # SQLite 数据文件和人脸照片（自动生成）
-└── uploads/           # 上传文件存放（自动生成）
+│   ├── api/              # 路由层
+│   │   ├── __init__.py   # 路由聚合
+│   │   ├── auth.py       # 登录/注册
+│   │   ├── attendance.py # 签到/活体挑战/记录/导出
+│   │   ├── students.py   # 学生CRUD/人脸批量导入/重建
+│   │   ├── group_photo.py# 合照识别
+│   │   ├── emotions.py   # 情绪记录查询
+│   │   ├── statistics.py # 仪表盘/考勤统计/活动统计
+│   │   └── deps.py       # JWT认证/权限依赖
+│   ├── services/         # 业务逻辑
+│   │   ├── face_service.py      # InsightFace SCRFD+ArcFace
+│   │   ├── liveness_service.py  # 11维活体检测
+│   │   ├── emotion_service.py   # 三引擎情绪分析
+│   │   ├── export_service.py    # Excel导出
+│   │   └── image_utils.py       # 图片读取/保存
+│   ├── models/           # SQLAlchemy ORM (5表)
+│   ├── schemas/          # Pydantic 校验
+│   └── core/             # 配置/数据库/安全
+├── models/               # InsightFace ONNX模型(已废弃,模型自动下载)
+├── database/             # SQLite DB + 人脸照片
+└── uploads/              # 上传文件
 
 frontend/
 ├── src/
-│   ├── components/    # 公共组件
-│   ├── layout/        # 整体布局
-│   ├── views/         # 页面：Login / Dashboard / Attendance / Students / Records / EmotionStats / ActivityStats / GroupPhoto
-│   └── stores/        # Pinia 状态管理
+│   ├── views/            # 页面组件 (8个)
+│   ├── api/              # Axios封装 (http.js + modules.js)
+│   ├── stores/           # Pinia状态 (auth.js)
+│   ├── router/           # 路由守卫
+│   ├── layout/           # 主布局
+│   └── components/       # 公共组件 (StudentDetail)
 └── package.json
 ```
+
+## 相关文档
+
+| 文档 | 说明 |
+| --- | --- |
+| `课程设计报告.md` | 完整课程设计报告（需求分析+系统设计+代码实现） |
+| `架构升级方案.md` | 技术架构设计文档 |
+| `第三方库选型分析.md` | DeepFace / InsightFace / HSEmotion 对比分析 |
+| `功能实现方案详细分析.md` | 按评分项逐条的优劣分析+整改方案 |
+| `request.md` | 评分标准 |
