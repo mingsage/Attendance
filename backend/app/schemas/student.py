@@ -28,3 +28,13 @@ class StudentOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class StudentBatchDeleteRequest(BaseModel):
+    student_ids: list[int] = Field(default_factory=list)
+
+
+class StudentBatchDeleteResponse(BaseModel):
+    deleted_count: int
+    missing_ids: list[int] = Field(default_factory=list)
+    deleted_images: int = 0
