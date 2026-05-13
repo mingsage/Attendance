@@ -7,11 +7,20 @@
         <el-button :icon="Search" @click="load">查询</el-button>
         <input ref="batchInputRef" hidden type="file" accept="image/png,image/jpeg" multiple @change="batchChanged" />
         <el-button :icon="FolderAdd" @click="batchInputRef.click()">批量导入人脸</el-button>
+        <el-button type="danger" :icon="Delete" :disabled="!selectedIds.length" @click="batchRemove">批量删除</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增学生</el-button>
       </div>
     </div>
 
-    <el-table :data="paginatedRows" class="section" @row-click="openDetail" style="cursor: pointer">
+    <el-table
+      ref="tableRef"
+      :data="paginatedRows"
+      class="section"
+      @row-click="openDetail"
+      @selection-change="handleSelectionChange"
+      style="cursor: pointer"
+    >
+      <el-table-column type="selection" width="48" />
       <el-table-column prop="student_no" label="学号" width="150" />
       <el-table-column prop="name" label="姓名" width="140" />
       <el-table-column prop="gender" label="性别" width="80" />
@@ -172,6 +181,7 @@ const keyword = ref('')
 const visible = ref(false)
 const batchInputRef = ref()
 const faceUploadInput = ref()
+const tableRef = ref()
 const currentPage = ref(1)
 const pageSize = ref(20)
 const form = reactive({ id: null, student_no: '', name: '', class_name: '', gender: '' })
@@ -180,6 +190,7 @@ const batchResult = reactive({ imported_count: 0, failed_count: 0, imported: [],
 const detailVisible = ref(false)
 const detailStudent = ref(null)
 const videoRef = ref()
+const selectedRows = ref([])
 
 const faceDialog = reactive({
   visible: false,
@@ -193,6 +204,8 @@ const paginatedRows = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return rows.value.slice(start, start + pageSize.value)
 })
+
+const selectedIds = computed(() => selectedRows.value.map((row) => row.id))
 
 async function load() {
   currentPage.value = 1
@@ -220,6 +233,24 @@ async function save() {
 async function remove(row) {
   await ElMessageBox.confirm(`确认删除 ${row.name}（${row.student_no}）？`, '删除确认')
   await studentApi.remove(row.id)
+  await load()
+}
+
+function handleSelectionChange(selection) {
+  selectedRows.value = selection
+}
+
+async function batchRemove() {
+  if (!selectedIds.value.length) return
+  await ElMessageBox.confirm(`确认删除选中的 ${selectedIds.value.length} 名学生？`, '删除确认', { type: 'warning' })
+  const { data } = await studentApi.batchDelete(selectedIds.value)
+  const missingCount = data.missing_ids?.length || 0
+  if (missingCount) {
+    ElMessage.warning(`已删除 ${data.deleted_count} 名学生，未找到 ${missingCount} 名`)
+  } else {
+    ElMessage.success(`已删除 ${data.deleted_count} 名学生`)
+  }
+  tableRef.value?.clearSelection()
   await load()
 }
 

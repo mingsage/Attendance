@@ -9,22 +9,32 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_teacher
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models.student import Student
-from app.schemas.student import StudentCreate, StudentOut, StudentUpdate
+from app.models import (
+    ActivityParticipation,
+    AttendanceRecord,
+    EmotionRecord,
+    Student,
+    User,
+)
+from app.schemas.student import (
+    StudentBatchDeleteRequest,
+    StudentBatchDeleteResponse,
+    StudentCreate,
+    StudentOut,
+    StudentUpdate,
+)
 from app.services.face_service import decode_array, encode_array, face_service
 from app.services.image_utils import read_image
-
 
 router = APIRouter(prefix="/students", tags=["学生管理"])
 
 FACE_NOT_FOUND = "未检测到清晰人脸，请使用正脸、光线充足、无遮挡的照片"
 
 
-def parse_face_filename(filename: str) -> tuple[str, str | None, str | None, str | None]:
-    """解析照片文件名：学号-姓名-班级-性别.jpg。
-
-    
-    """
+def parse_face_filename(
+    filename: str,
+) -> tuple[str, str | None, str | None, str | None]:
+    """解析照片文件名：学号-姓名-班级-性别.jpg。"""
 
     stem = Path(filename or "").stem.strip()
     parts = [item.strip() for item in re.split(r"[-_－—]", stem) if item.strip()]
@@ -48,7 +58,8 @@ def to_out(student: Student) -> StudentOut:
         class_name=student.class_name,
         gender=student.gender,
         has_face=student.face_encoding is not None,
-        face_sample_count=student.face_sample_count or (1 if student.face_encoding else 0),
+        face_sample_count=student.face_sample_count
+        or (1 if student.face_encoding else 0),
         face_image_path=raw_path,
         face_image_url=face_image_url,
     )
@@ -81,11 +92,46 @@ def save_face_image(student: Student, image: np.ndarray, filename: str | None) -
     return str(path)
 
 
+def resolve_backend_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def resolve_face_dir(backend_root: Path) -> Path:
+    settings = get_settings()
+    face_dir = settings.face_db_dir
+    if not face_dir.is_absolute():
+        face_dir = backend_root / face_dir
+    return face_dir
+
+
+def delete_face_files(student: Student, face_dir: Path, backend_root: Path) -> int:
+    deleted = 0
+    if student.student_no and face_dir.exists():
+        for path in face_dir.glob(f"{student.student_no}_*"):
+            try:
+                path.unlink()
+                deleted += 1
+            except FileNotFoundError:
+                pass
+    if student.face_image_path:
+        path = Path(student.face_image_path)
+        if not path.is_absolute():
+            path = backend_root / path
+        try:
+            path.unlink()
+            deleted += 1
+        except FileNotFoundError:
+            pass
+    return deleted
+
+
 @router.get("", response_model=list[StudentOut])
 def list_students(keyword: str = "", db: Session = Depends(get_db)):
     query = db.query(Student)
     if keyword:
-        query = query.filter((Student.name.contains(keyword)) | (Student.student_no.contains(keyword)))
+        query = query.filter(
+            (Student.name.contains(keyword)) | (Student.student_no.contains(keyword))
+        )
     return [to_out(item) for item in query.order_by(Student.id.desc()).all()]
 
 
@@ -116,8 +162,12 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
     return to_out(student)
 
 
-@router.put("/{student_id}", response_model=StudentOut, dependencies=[Depends(require_teacher)])
-def update_student(student_id: int, payload: StudentUpdate, db: Session = Depends(get_db)):
+@router.put(
+    "/{student_id}", response_model=StudentOut, dependencies=[Depends(require_teacher)]
+)
+def update_student(
+    student_id: int, payload: StudentUpdate, db: Session = Depends(get_db)
+):
     student = db.get(Student, student_id)
     if not student:
         raise HTTPException(status_code=404, detail="学生不存在")
@@ -138,8 +188,60 @@ def delete_student(student_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@router.post("/{student_id}/face", response_model=StudentOut, dependencies=[Depends(require_teacher)])
-async def upload_face(student_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+@router.post(
+    "/batch-delete",
+    response_model=StudentBatchDeleteResponse,
+    dependencies=[Depends(require_teacher)],
+)
+def batch_delete_students(
+    payload: StudentBatchDeleteRequest, db: Session = Depends(get_db)
+):
+    student_ids = list(dict.fromkeys(payload.student_ids))
+    if not student_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一名学生")
+
+    students = db.query(Student).filter(Student.id.in_(student_ids)).all()
+    found_ids = {student.id for student in students}
+    missing_ids = [
+        student_id for student_id in student_ids if student_id not in found_ids
+    ]
+
+    backend_root = resolve_backend_root()
+    face_dir = resolve_face_dir(backend_root)
+    deleted_images = 0
+
+    for student in students:
+        db.query(AttendanceRecord).filter(
+            AttendanceRecord.student_id == student.id
+        ).delete(synchronize_session=False)
+        db.query(EmotionRecord).filter(EmotionRecord.student_id == student.id).delete(
+            synchronize_session=False
+        )
+        db.query(ActivityParticipation).filter(
+            ActivityParticipation.student_id == student.id
+        ).delete(synchronize_session=False)
+        db.query(User).filter(User.student_id == student.id).delete(
+            synchronize_session=False
+        )
+        deleted_images += delete_face_files(student, face_dir, backend_root)
+        db.delete(student)
+
+    db.commit()
+    return StudentBatchDeleteResponse(
+        deleted_count=len(students),
+        missing_ids=missing_ids,
+        deleted_images=deleted_images,
+    )
+
+
+@router.post(
+    "/{student_id}/face",
+    response_model=StudentOut,
+    dependencies=[Depends(require_teacher)],
+)
+async def upload_face(
+    student_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)
+):
     student = db.get(Student, student_id)
     if not student:
         raise HTTPException(status_code=404, detail="学生不存在")
@@ -157,7 +259,9 @@ async def upload_face(student_id: int, file: UploadFile = File(...), db: Session
 
 
 @router.post("/faces/batch", dependencies=[Depends(require_teacher)])
-async def batch_upload_faces(files: list[UploadFile] = File(...), db: Session = Depends(get_db)):
+async def batch_upload_faces(
+    files: list[UploadFile] = File(...), db: Session = Depends(get_db)
+):
     """批量导入人脸库，文件名格式：学号-姓名-班级-性别.jpg。"""
 
     imported = []
@@ -179,9 +283,19 @@ async def batch_upload_faces(files: list[UploadFile] = File(...), db: Session = 
             student = db.query(Student).filter(Student.student_no == student_no).first()
             if not student:
                 if not name or not class_name:
-                    failed.append({"filename": file.filename, "reason": "新学生照片必须使用：学号-姓名-班级-性别.jpg"})
+                    failed.append(
+                        {
+                            "filename": file.filename,
+                            "reason": "新学生照片必须使用：学号-姓名-班级-性别.jpg",
+                        }
+                    )
                     continue
-                student = Student(student_no=student_no, name=name, class_name=class_name, gender=gender)
+                student = Student(
+                    student_no=student_no,
+                    name=name,
+                    class_name=class_name,
+                    gender=gender,
+                )
                 db.add(student)
                 db.flush()
             else:
@@ -210,7 +324,12 @@ async def batch_upload_faces(files: list[UploadFile] = File(...), db: Session = 
             failed.append({"filename": file.filename, "reason": str(exc)})
 
     db.commit()
-    return {"imported_count": len(imported), "failed_count": len(failed), "imported": imported, "failed": failed}
+    return {
+        "imported_count": len(imported),
+        "failed_count": len(failed),
+        "imported": imported,
+        "failed": failed,
+    }
 
 
 @router.post("/faces/rebuild", dependencies=[Depends(require_teacher)])
@@ -223,18 +342,41 @@ def rebuild_face_features(db: Session = Depends(get_db)):
     for student in students:
         path = Path(student.face_image_path or "")
         if not path.exists():
-            failed.append({"student_no": student.student_no, "name": student.name, "reason": "照片文件不存在"})
+            failed.append(
+                {
+                    "student_no": student.student_no,
+                    "name": student.name,
+                    "reason": "照片文件不存在",
+                }
+            )
             continue
         image = cv2.imread(str(path))
         if image is None:
-            failed.append({"student_no": student.student_no, "name": student.name, "reason": "照片读取失败"})
+            failed.append(
+                {
+                    "student_no": student.student_no,
+                    "name": student.name,
+                    "reason": "照片读取失败",
+                }
+            )
             continue
         feature = face_service.extract_detected_feature(image)
         if feature is None:
-            failed.append({"student_no": student.student_no, "name": student.name, "reason": FACE_NOT_FOUND})
+            failed.append(
+                {
+                    "student_no": student.student_no,
+                    "name": student.name,
+                    "reason": FACE_NOT_FOUND,
+                }
+            )
             continue
         student.face_encoding = encode_array(feature)
         student.face_sample_count = 1
         rebuilt.append({"student_no": student.student_no, "name": student.name})
     db.commit()
-    return {"rebuilt_count": len(rebuilt), "failed_count": len(failed), "rebuilt": rebuilt, "failed": failed}
+    return {
+        "rebuilt_count": len(rebuilt),
+        "failed_count": len(failed),
+        "rebuilt": rebuilt,
+        "failed": failed,
+    }

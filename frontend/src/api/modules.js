@@ -12,6 +12,7 @@ export const studentApi = {
   create: (data) => http.post('/students', data),
   update: (id, data) => http.put(`/students/${id}`, data),
   remove: (id) => http.delete(`/students/${id}`),
+  batchDelete: (studentIds) => http.post('/students/batch-delete', { student_ids: studentIds }),
   uploadFace: (id, file) => {
     const form = new FormData()
     form.append('file', file)
