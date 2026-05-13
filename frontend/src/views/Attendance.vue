@@ -34,7 +34,7 @@
           <p>点击下方按钮开启摄像头</p>
         </div>
 
-        <!-- 自动拍照倒计时 -->
+        <!-- 倒计时 overlay -->
         <transition name="countdown-fade">
           <div v-if="countdown > 0" class="countdown-overlay">
             <svg class="countdown-ring" viewBox="0 0 100 100">
@@ -46,6 +46,14 @@
               />
             </svg>
             <span class="countdown-number">{{ countdown }}</span>
+          </div>
+        </transition>
+
+        <!-- 连续捕捉状态 -->
+        <transition name="status-fade">
+          <div v-if="captureStatus" class="capture-status-bar" :class="'status-' + statusType">
+            <span class="status-dot" />
+            {{ captureStatus }}
           </div>
         </transition>
       </div>
@@ -79,6 +87,9 @@
         </el-button>
         <el-button :icon="Timer" :disabled="autoCapturing" @click="autoCapture">
           3 秒自动拍照
+        </el-button>
+        <el-button :type="continuousMode ? 'danger' : 'warning'" :icon="VideoCamera" @click="toggleContinuousCapture">
+          {{ continuousMode ? '停止捕捉' : '自动捕捉' }}
         </el-button>
       </div>
 
@@ -160,6 +171,11 @@ const cameraActive = ref(false)
 const faceDetected = ref(false)
 const countdown = ref(0)
 const countdownTotal = ref(3)
+const continuousMode = ref(false)
+const captureStatus = ref('')
+const statusType = ref('info')
+const cooldownCount = ref(0)
+let continuousTimer = null
 const challenge = reactive({ action: '', text: '' })
 
 let cameraStream = null
@@ -322,9 +338,103 @@ async function autoCapture() {
   }, 1000)
 }
 
+async function toggleContinuousCapture() {
+  if (continuousMode.value) {
+    continuousMode.value = false
+    if (continuousTimer) {
+      clearInterval(continuousTimer)
+      continuousTimer = null
+    }
+    captureStatus.value = ''
+    cooldownCount.value = 0
+    statusStep.value = 1
+    return
+  }
+
+  if (!cameraActive.value) await startCamera()
+  continuousMode.value = true
+  captureStatus.value = '等待人脸…'
+  statusType.value = 'info'
+  startContinuousLoop()
+}
+
+function startContinuousLoop() {
+  continuousTimer = setInterval(() => {
+    if (!continuousMode.value) return
+    if (cooldownCount.value > 0) return
+
+    if (!faceDetected.value) {
+      captureStatus.value = '等待人脸…'
+      statusType.value = 'info'
+      return
+    }
+
+    const video = videoRef.value
+    if (!video?.videoWidth) return
+
+    captureStatus.value = '检测中…'
+    statusType.value = 'warning'
+    statusStep.value = 2
+
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d').drawImage(video, 0, 0)
+
+    canvas.toBlob(async (blob) => {
+      if (!blob || !continuousMode.value) return
+
+      captureStatus.value = '识别中…'
+      statusType.value = 'info'
+      statusStep.value = 3
+
+      try {
+        const { data } = await attendanceApi.checkIn(
+          new File([blob], 'check-in.jpg', { type: 'image/jpeg' }),
+          courseName.value
+        )
+        result.value = data
+        statusStep.value = 4
+
+        if (data.success) {
+          captureStatus.value = `签到成功：${data.record?.student?.name || '✓'}`
+          statusType.value = 'success'
+        } else {
+          captureStatus.value = data.message?.length > 30 ? '签到失败' : data.message
+          statusType.value = 'error'
+        }
+      } catch {
+        captureStatus.value = '请求失败'
+        statusType.value = 'error'
+      }
+
+      await startCooldown()
+    }, 'image/jpeg', 0.95)
+  }, 800)
+}
+
+function startCooldown() {
+  return new Promise((resolve) => {
+    cooldownCount.value = 3
+    const timer = setInterval(() => {
+      cooldownCount.value--
+      if (cooldownCount.value > 0) {
+        captureStatus.value = `冷却中 ${cooldownCount.value}s…`
+        statusType.value = 'info'
+      } else {
+        clearInterval(timer)
+        captureStatus.value = '等待人脸…'
+        statusType.value = 'info'
+        resolve()
+      }
+    }, 1000)
+  })
+}
+
 onMounted(loadLivenessSettings)
 
 onBeforeUnmount(() => {
+  if (continuousTimer) clearInterval(continuousTimer)
   if (detectInterval) clearInterval(detectInterval)
   cameraStream?.getTracks().forEach((t) => t.stop())
 })
@@ -500,6 +610,68 @@ onBeforeUnmount(() => {
 }
 .countdown-fade-enter-from,
 .countdown-fade-leave-to {
+  opacity: 0;
+}
+
+/* 连续捕捉状态条 */
+.capture-status-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 11;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.capture-status-bar.status-info {
+  background: rgba(107, 114, 128, 0.85);
+  color: #fff;
+}
+.capture-status-bar.status-success {
+  background: rgba(16, 185, 129, 0.9);
+  color: #fff;
+}
+.capture-status-bar.status-error {
+  background: rgba(239, 68, 68, 0.9);
+  color: #fff;
+}
+.capture-status-bar.status-warning {
+  background: rgba(245, 158, 11, 0.9);
+  color: #fff;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: statusPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.status-fade-enter-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.status-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.status-fade-enter-from {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+.status-fade-leave-to {
   opacity: 0;
 }
 </style>
