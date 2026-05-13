@@ -117,6 +117,9 @@ class TemporalConsistency:
     def update(
         self, gray: np.ndarray, kps: np.ndarray | None
     ) -> tuple[float, str]:
+        # 统一尺寸避免相邻帧裁剪框不一致导致光流报错
+        gray = cv2.resize(gray, (128, 128), interpolation=cv2.INTER_AREA)
+
         if self.prev_gray is None:
             self.prev_gray = gray.copy()
             self.prev_kps = kps.copy() if kps is not None else None
