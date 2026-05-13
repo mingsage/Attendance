@@ -109,7 +109,6 @@ backend/
 │   ├── models/           # SQLAlchemy ORM (5表)
 │   ├── schemas/          # Pydantic 校验
 │   └── core/             # 配置/数据库/安全
-├── models/               # InsightFace ONNX模型(已废弃,模型自动下载)
 ├── database/             # SQLite DB + 人脸照片
 └── uploads/              # 上传文件
 
@@ -128,8 +127,8 @@ frontend/
 
 | 文档 | 说明 |
 | --- | --- |
-| `课程设计报告.md` | 完整课程设计报告（需求分析+系统设计+代码实现） |
-| `架构升级方案.md` | 技术架构设计文档 |
-| `第三方库选型分析.md` | DeepFace / InsightFace / HSEmotion 对比分析 |
-| `功能实现方案详细分析.md` | 按评分项逐条的优劣分析+整改方案 |
-| `request.md` | 评分标准 |
+| `docs/课程设计报告.md` | 完整课程设计报告（需求分析+系统设计+代码实现） |
+| `docs/架构升级方案.md` | 技术架构设计文档 |
+| `docs/第三方库选型分析.md` | DeepFace / InsightFace / HSEmotion 对比分析 |
+| `docs/功能实现方案详细分析.md` | 按评分项逐条的优劣分析+整改方案 |
+| `docs/request.md` | 评分标准 |
