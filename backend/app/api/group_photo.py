@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_teacher
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.models.activity import ActivityParticipation
 from app.models.attendance import AttendanceRecord
 from app.models.emotion import EmotionRecord
 from app.models.student import Student
@@ -67,6 +68,15 @@ async def recognize_group_photo(
                 confidence=emotion_confidence,
                 source="group_photo",
                 timestamp=now,
+            )
+        )
+        db.add(
+            ActivityParticipation(
+                student_id=matched_id,
+                activity_name=activity_name,
+                activity_date=now.date(),
+                recognized=True,
+                confidence=round(confidence, 3),
             )
         )
         results.append(

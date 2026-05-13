@@ -8,3 +8,17 @@ bcrypt>=4.3.0
 openpyxl==3.1.5
 numpy>=2.0
 opencv-python>=4.12.0.88
+scikit-image>=0.24.0
+
+# 人脸检测 + 识别 (替换 OpenCV YuNet/SFace)
+insightface>=0.7.3
+onnxruntime>=1.18.0
+
+# 活体反欺骗 (MiniFASNet)
+deepface>=0.0.79
+
+# 情绪识别 (替换 DeepFace 情绪)
+hsemotion>=0.3.0
+torch>=2.0.0
+torchvision>=0.15.0
+timm>=0.9.0

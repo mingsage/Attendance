@@ -270,7 +270,7 @@ async function submit(file) {
   statusStep.value = 2
   result.value = null
   try {
-    const { data } = await attendanceApi.checkIn(file, courseName.value)
+    const { data } = await attendanceApi.checkIn(file, courseName.value, challenge.action)
     result.value = data
     statusStep.value = 4
     if (data.success) {
@@ -391,7 +391,8 @@ function startContinuousLoop() {
       try {
         const { data } = await attendanceApi.checkIn(
           new File([blob], 'check-in.jpg', { type: 'image/jpeg' }),
-          courseName.value
+          courseName.value,
+          challenge.action
         )
         result.value = data
         statusStep.value = 4
