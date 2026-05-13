@@ -33,6 +33,21 @@
           <el-icon :size="48"><VideoCamera /></el-icon>
           <p>点击下方按钮开启摄像头</p>
         </div>
+
+        <!-- 自动拍照倒计时 -->
+        <transition name="countdown-fade">
+          <div v-if="countdown > 0" class="countdown-overlay">
+            <svg class="countdown-ring" viewBox="0 0 100 100">
+              <circle class="countdown-bg" cx="50" cy="50" r="44" />
+              <circle
+                class="countdown-progress"
+                cx="50" cy="50" r="44"
+                :style="{ strokeDashoffset: 276 * (1 - countdown / countdownTotal) }"
+              />
+            </svg>
+            <span class="countdown-number">{{ countdown }}</span>
+          </div>
+        </transition>
       </div>
 
       <!-- 提示 -->
@@ -143,6 +158,8 @@ const autoCapturing = ref(false)
 const livenessEnabled = ref(false)
 const cameraActive = ref(false)
 const faceDetected = ref(false)
+const countdown = ref(0)
+const countdownTotal = ref(3)
 const challenge = reactive({ action: '', text: '' })
 
 let cameraStream = null
@@ -293,11 +310,16 @@ async function autoCapture() {
   if (!videoRef.value?.videoWidth) await startCamera()
   autoCapturing.value = true
   statusStep.value = 2
-  ElMessage.info(livenessEnabled.value ? '请按提示完成动作，3 秒后自动拍照' : '3 秒后自动拍照')
-  setTimeout(() => {
-    autoCapturing.value = false
-    captureAndSubmit()
-  }, 3000)
+  countdownTotal.value = 3
+  countdown.value = 3
+  const timer = setInterval(() => {
+    countdown.value--
+    if (countdown.value <= 0) {
+      clearInterval(timer)
+      autoCapturing.value = false
+      captureAndSubmit()
+    }
+  }, 1000)
 }
 
 onMounted(loadLivenessSettings)
@@ -427,5 +449,57 @@ onBeforeUnmount(() => {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* 自动拍照倒计时 */
+.countdown-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 10;
+}
+
+.countdown-ring {
+  width: 96px;
+  height: 96px;
+  transform: rotate(-90deg);
+}
+
+.countdown-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 5;
+}
+
+.countdown-progress {
+  fill: none;
+  stroke: #10b981;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-dasharray: 276;
+  transition: stroke-dashoffset 0.9s linear;
+}
+
+.countdown-number {
+  position: absolute;
+  font-size: 40px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  user-select: none;
+}
+
+.countdown-fade-enter-active {
+  transition: opacity 0.25s ease;
+}
+.countdown-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.countdown-fade-enter-from,
+.countdown-fade-leave-to {
+  opacity: 0;
 }
 </style>
