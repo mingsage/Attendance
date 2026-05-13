@@ -12,40 +12,53 @@
         <el-button type="primary" :icon="Download" @click="download">导出</el-button>
       </div>
     </div>
-    <el-table :data="paginatedRows" class="section" @sort-change="onSort">
-      <el-table-column prop="timestamp" label="时间" width="180" sortable="custom">
+    <el-table :data="paginatedRows" class="section" stripe border @sort-change="onSort" @row-click="showDetailFromRow" style="cursor: pointer">
+      <el-table-column prop="timestamp" label="时间" width="170" sortable="custom">
         <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
       </el-table-column>
-      <el-table-column prop="course_name" label="课程" />
-      <el-table-column label="学生" min-width="140">
+      <el-table-column prop="course_name" label="课程" min-width="100" />
+      <el-table-column label="学生" width="160">
         <template #default="{ row }">
-          <span v-if="row.student" class="student-link" @click="showDetail(row.student)">
-            <span style="font-weight:500">{{ row.student.name }}</span>
-            <span style="color:#9ca3af;font-size:12px;margin-left:4px">{{ row.student.student_no }}</span>
+          <span v-if="row.student" class="student-link">
+            <span style="font-weight: 500">{{ row.student.name }}</span>
+            <span style="color: #9ca3af; font-size: 12px; margin-left: 6px">{{ row.student.student_no }}</span>
           </span>
-          <span v-else>-</span>
+          <span v-else style="color: #9ca3af">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="100">
+      <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <span :class="['status-tag', row.status]">
             {{ row.status === 'success' ? '成功' : '失败' }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="confidence" label="置信度" width="100" sortable="custom">
+      <el-table-column prop="confidence" label="置信度" width="95" sortable="custom" align="center">
         <template #default="{ row }">
-          <span v-if="row.confidence !== null">{{ (row.confidence * 100).toFixed(1) }}%</span>
-          <span v-else>-</span>
+          <span v-if="row.confidence !== null" :style="{ color: row.confidence >= 0.58 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">
+            {{ (row.confidence * 100).toFixed(1) }}%
+          </span>
+          <span v-else style="color: #9ca3af">-</span>
         </template>
       </el-table-column>
-      <el-table-column prop="liveness_score" label="活体分" width="90">
+      <el-table-column label="活体分" width="85" align="center">
         <template #default="{ row }">
-          {{ row.liveness_score?.toFixed(3) || '-' }}
+          <span v-if="row.liveness_score" :style="{ color: row.liveness_score >= 0.3 ? 'var(--success)' : 'var(--danger)' }">
+            {{ row.liveness_score.toFixed(2) }}
+          </span>
+          <span v-else style="color: #9ca3af">-</span>
         </template>
       </el-table-column>
-      <el-table-column prop="emotion_type" label="情绪" width="90" />
-      <el-table-column prop="message" label="备注" min-width="160" show-overflow-tooltip />
+      <el-table-column label="情绪" width="130">
+        <template #default="{ row }">
+          <span v-if="row.emotion_type" class="emotion-cell">
+            <span class="emotion-icon">{{ EMOTION_ICONS[row.emotion_type] || '' }}</span>
+            {{ row.emotion_type }}
+          </span>
+          <span v-else style="color: #9ca3af">-</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="message" label="备注" min-width="140" show-overflow-tooltip />
     </el-table>
 
     <div v-if="rows.length > 20" class="pagination-wrapper">
@@ -66,6 +79,16 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { Download, Search } from '@element-plus/icons-vue'
 import { attendanceApi } from '../api/modules'
 import StudentDetail from '../components/StudentDetail.vue'
+
+const EMOTION_ICONS = {
+  happy: '😊',
+  sad: '😢',
+  angry: '😠',
+  surprised: '😮',
+  fearful: '😨',
+  disgusted: '🤢',
+  neutral: '😐',
+}
 
 const rows = ref([])
 const filters = reactive({ keyword: '', status: '' })
@@ -108,6 +131,13 @@ function showDetail(student) {
   }
 }
 
+function showDetailFromRow(row) {
+  if (row.student?.id) {
+    detailStudentId.value = row.student.id
+    detailVisible.value = true
+  }
+}
+
 async function download() {
   const { data } = await attendanceApi.export(filters)
   const url = URL.createObjectURL(data)
@@ -133,6 +163,48 @@ onMounted(load)
 }
 
 .student-link:hover span:first-child {
-  color: #2563eb;
+  color: var(--primary, #2563eb);
+}
+
+/* 情绪列 */
+.emotion-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.emotion-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* 表格覆盖 */
+:deep(.el-table) {
+  border-radius: 10px !important;
+  overflow: hidden;
+}
+
+:deep(.el-table th.el-table__cell) {
+  background: #f8fafc !important;
+  color: #6b7280 !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+}
+
+:deep(.el-table .el-table__row:hover) {
+  background: #f0f7ff !important;
+}
+
+:deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
+  background: #fafbfc;
+}
+
+:deep(.el-table--border) {
+  border-color: #e5e7eb;
+}
+
+:deep(.el-table__body td) {
+  padding: 6px 0 !important;
 }
 </style>
