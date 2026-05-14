@@ -12,14 +12,18 @@ class Student(Base):
     name: Mapped[str] = mapped_column(String(64), index=True)
     class_name: Mapped[str] = mapped_column(String(64), index=True)
     gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    grade: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    major: Mapped[str | None] = mapped_column(String(64), nullable=True)
     face_encoding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     face_sample_count: Mapped[int] = mapped_column(default=0)
     face_image_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    face_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending/approved/rejected
 
     user = relationship("User", back_populates="student", uselist=False)
     attendance_records = relationship("AttendanceRecord", back_populates="student")
     emotion_records = relationship("EmotionRecord", back_populates="student")
     activities = relationship("ActivityParticipation", back_populates="student")
+    groups = relationship("Group", secondary="group_members", back_populates="students")
 
     @property
     def has_face(self) -> bool:

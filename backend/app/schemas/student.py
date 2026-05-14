@@ -6,6 +6,8 @@ class StudentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     class_name: str = Field(min_length=1, max_length=64)
     gender: str | None = Field(default=None, max_length=16)
+    grade: str | None = Field(default=None, max_length=16)
+    major: str | None = Field(default=None, max_length=64)
 
 
 class StudentUpdate(BaseModel):
@@ -13,6 +15,8 @@ class StudentUpdate(BaseModel):
     name: str | None = None
     class_name: str | None = None
     gender: str | None = None
+    grade: str | None = None
+    major: str | None = None
 
 
 class StudentOut(BaseModel):
@@ -21,10 +25,13 @@ class StudentOut(BaseModel):
     name: str
     class_name: str
     gender: str | None = None
+    grade: str | None = None
+    major: str | None = None
     has_face: bool
     face_sample_count: int = 0
     face_image_path: str | None = None
     face_image_url: str | None = None
+    face_status: str = "pending"
 
     class Config:
         from_attributes = True
