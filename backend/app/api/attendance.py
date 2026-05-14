@@ -58,35 +58,15 @@ def _query_records(db, user, keyword="", status=""):
 
 # ── 轻量识别（不写库）───────────────────────────────────
 
-def _deepface_detect(image: np.ndarray):
-    """DeepFace 人脸检测，返回 [{"bbox": [x,y,w,h]}]。"""
-    from deepface import DeepFace
-    try:
-        results = DeepFace.extract_faces(
-            img_path=image, detector_backend="opencv",
-            enforce_detection=False, align=False,
-        )
-    except Exception:
-        return []
-    faces = []
-    for r in results:
-        area = r.get("facial_area", {})
-        if area:
-            faces.append({
-                "bbox": [area["x"], area["y"], area["w"], area["h"]],
-            })
-    return faces
-
-
 @router.post("/detect")
 async def detect_faces(
     file: UploadFile = File(...),
     _: User = Depends(get_current_user),
 ):
-    """纯人脸检测——DeepFace 检测，只画框，80ms 级。"""
+    """纯人脸检测——只画框，不做识别，80ms 级。"""
     image = await read_image(file)
-    faces = _deepface_detect(image)
-    return {"faces": faces, "count": len(faces)}
+    faces = face_service.detect(image, backend="yunet")
+    return {"faces": [{"bbox": f["bbox"]} for f in faces], "count": len(faces)}
 
 
 @router.post("/recognize", response_model=RecognizeResponse)
@@ -94,13 +74,12 @@ async def recognize(
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
 ):
-    """轻量识别：DeepFace 检测 + ArcFace 提取 + 1:1 比对，不写库。"""
+    """轻量识别：检测 + 与当前登录学生 1:1 比对，不写库。"""
     image = await read_image(file)
-    df_faces = _deepface_detect(image)
-    if not df_faces:
+    details = face_service.detect_face_details(image)
+    if not details:
         return RecognizeResponse(faces=[], face_count=0, matched=False)
 
-    # 1:1 比对——只比对当前登录学生的人脸
     target_encoding = None
     target_student = None
     if user.role == "student" and user.student_id:
@@ -110,12 +89,9 @@ async def recognize(
 
     faces: list[RecognizeFace] = []
     matched_any = False
-    for df in df_faces:
-        bbox = df["bbox"]
-        # 裁剪人脸区域后用 ArcFace 提取特征
-        x, y, w, h = bbox
-        face_crop = image[max(0, y):y+h, max(0, x):x+w]
-        probe = face_service.extract_detected_feature(face_crop)
+    for d in details:
+        bbox = d["bbox"]
+        probe = d.get("embedding")
         if probe is None or target_encoding is None or probe.shape != target_encoding.shape:
             faces.append(RecognizeFace(bbox=bbox, matched=False))
             continue

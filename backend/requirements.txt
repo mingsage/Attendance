@@ -10,11 +10,7 @@ numpy>=2.0
 opencv-python>=4.12.0.88
 scikit-image>=0.24.0
 
-# 人脸检测 + 识别 (替换 OpenCV YuNet/SFace)
-insightface>=0.7.3
-onnxruntime>=1.18.0
-
-# 活体反欺骗 (MiniFASNet)
+# 人脸检测 + 识别 + 反欺骗 (统一使用 DeepFace)
 deepface>=0.0.79
 tf-keras>=2.17.0
 
