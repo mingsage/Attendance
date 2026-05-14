@@ -36,8 +36,16 @@ def dashboard(db: Session = Depends(get_db), _: User = Depends(get_current_user)
 
 
 @router.get("/emotion", response_model=list[CountItem])
-def emotion_stats(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    rows = db.query(EmotionRecord.emotion_type, func.count(EmotionRecord.id)).group_by(EmotionRecord.emotion_type).all()
+def emotion_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    query = db.query(EmotionRecord.emotion_type, func.count(EmotionRecord.id))
+    if user.role == "student":
+        if not user.student_id:
+            return []
+        query = query.filter(
+            EmotionRecord.student_id == user.student_id,
+            EmotionRecord.source == "attendance",
+        )
+    rows = query.group_by(EmotionRecord.emotion_type).all()
     return [CountItem(name=name, value=count) for name, count in rows]
 
 

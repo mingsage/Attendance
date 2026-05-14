@@ -18,10 +18,33 @@
       </el-descriptions>
     </el-card>
 
-    <el-card class="section" style="margin-top: 16px">
+    <el-card class="section face-card" style="margin-top: 16px">
       <template #header>
-        <span>人脸录入</span>
+        <div class="card-header">
+          <span>我的人脸</span>
+          <el-button
+            v-if="student?.face_image_url"
+            link
+            type="primary"
+            :icon="View"
+            @click="openFacePreview"
+          >
+            查看当前照片
+          </el-button>
+        </div>
       </template>
+      <div class="current-face">
+        <button
+          v-if="student?.face_image_url"
+          class="current-face-photo"
+          type="button"
+          @click="openFacePreview"
+        >
+          <img :src="student.face_image_url" alt="当前人脸照片" />
+          <span>点击查看数据库中的当前照片</span>
+        </button>
+        <div v-else class="current-face-empty">暂无已录入的人脸照片</div>
+      </div>
 
       <!-- 模式选择 -->
       <div v-if="!method" class="face-method-select">
@@ -66,23 +89,58 @@
       </div>
     </el-card>
 
+    <el-card class="section account-card" style="margin-top: 16px">
+      <template #header>
+        <div class="card-header">
+          <span>我的账户</span>
+        </div>
+      </template>
+      <el-form class="account-form" :model="passwordForm" label-width="86px">
+        <el-form-item label="原密码">
+          <el-input v-model="passwordForm.old_password" type="password" show-password autocomplete="current-password" />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="passwordForm.new_password" type="password" show-password autocomplete="new-password" />
+        </el-form-item>
+        <el-form-item label="确认密码">
+          <el-input v-model="passwordForm.confirm_password" type="password" show-password autocomplete="new-password" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :icon="Lock" :loading="passwordLoading" @click="submitPassword">
+            修改密码
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-dialog v-model="facePreviewVisible" title="当前人脸照片" width="480px" destroy-on-close>
+      <img v-if="student?.face_image_url" :src="student.face_image_url" class="face-preview-image" alt="当前人脸照片" />
+    </el-dialog>
+
     <input ref="fileInputRef" hidden type="file" accept="image/png,image/jpeg" @change="onFileChange" />
   </div>
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { CameraFilled, Check, UploadFilled } from '@element-plus/icons-vue'
-import { studentApi } from '../api/modules'
+import { CameraFilled, Check, Lock, UploadFilled, View } from '@element-plus/icons-vue'
+import { authApi, studentApi } from '../api/modules'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
 const student = ref(null)
 const method = ref('')  // '' | 'camera' | 'done'
 const loading = ref(false)
+const passwordLoading = ref(false)
+const facePreviewVisible = ref(false)
 const videoRef = ref()
 const fileInputRef = ref()
+const passwordForm = reactive({
+  old_password: '',
+  new_password: '',
+  confirm_password: '',
+})
 let cameraStream = null
 
 async function loadMyInfo() {
@@ -96,6 +154,14 @@ async function loadMyInfo() {
 
 function triggerUpload() {
   fileInputRef.value?.click()
+}
+
+function openFacePreview() {
+  if (!student.value?.face_image_url) {
+    ElMessage.warning('当前还没有数据库照片')
+    return
+  }
+  facePreviewVisible.value = true
 }
 
 async function onFileChange(event) {
@@ -165,6 +231,32 @@ async function uploadFace(file) {
   }
 }
 
+async function submitPassword() {
+  if (!passwordForm.old_password || !passwordForm.new_password || !passwordForm.confirm_password) {
+    ElMessage.warning('请完整填写密码信息')
+    return
+  }
+  if (passwordForm.new_password.length < 6) {
+    ElMessage.warning('新密码至少 6 位')
+    return
+  }
+  if (passwordForm.new_password !== passwordForm.confirm_password) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+  passwordLoading.value = true
+  try {
+    await authApi.changePassword({
+      old_password: passwordForm.old_password,
+      new_password: passwordForm.new_password,
+    })
+    Object.assign(passwordForm, { old_password: '', new_password: '', confirm_password: '' })
+    ElMessage.success('密码修改成功')
+  } finally {
+    passwordLoading.value = false
+  }
+}
+
 onMounted(() => {
   if (auth.role === 'student') loadMyInfo()
 })
@@ -178,6 +270,73 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.current-face {
+  margin-bottom: 14px;
+}
+
+.current-face-photo {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  color: #374151;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.current-face-photo:hover {
+  border-color: #409eff;
+  background: #ecf5ff;
+  color: #2563eb;
+}
+
+.current-face-photo img {
+  width: 72px;
+  height: 88px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #e5e7eb;
+}
+
+.current-face-photo span {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.current-face-empty {
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 18px;
+  color: #9ca3af;
+  text-align: center;
+  background: #f9fafb;
+}
+
+.account-form {
+  max-width: 420px;
+}
+
+.face-preview-image {
+  width: 100%;
+  max-height: 68vh;
+  display: block;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #111827;
+}
+
 .face-method-select {
   display: flex;
   gap: 16px;

@@ -8,7 +8,7 @@ const routes = [
     component: () => import('../layout/MainLayout.vue'),
     children: [
       { path: '', redirect: '/dashboard' },
-      { path: 'dashboard', component: () => import('../views/Dashboard.vue') },
+      { path: 'dashboard', component: () => import('../views/Dashboard.vue'), meta: { role: 'teacher' } },
       { path: 'attendance', component: () => import('../views/Attendance.vue'), meta: { role: 'teacher' } },
       { path: 'records', component: () => import('../views/Records.vue') },
       { path: 'students', component: () => import('../views/Students.vue'), meta: { role: 'teacher' } },
@@ -25,11 +25,15 @@ const router = createRouter({
   routes
 })
 
+function homePath(role) {
+  return role === 'student' ? '/my-profile' : '/dashboard'
+}
+
 router.beforeEach((to) => {
   const auth = useAuthStore()
   if (to.path !== '/login' && !auth.isLoggedIn) return '/login'
-  if (to.path === '/login' && auth.isLoggedIn) return '/dashboard'
-  if (to.meta?.role && auth.role !== to.meta.role) return '/dashboard'
+  if (to.path === '/login' && auth.isLoggedIn) return homePath(auth.role)
+  if (to.meta?.role && auth.role !== to.meta.role) return homePath(auth.role)
   return true
 })
 

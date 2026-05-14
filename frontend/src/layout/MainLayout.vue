@@ -15,7 +15,7 @@
         text-color="#9ca3af"
         active-text-color="#ffffff"
       >
-        <el-menu-item index="/dashboard">
+        <el-menu-item v-if="auth.role === 'teacher'" index="/dashboard">
           <el-icon><DataBoard /></el-icon>
           <span>总览</span>
         </el-menu-item>
@@ -85,6 +85,7 @@ const routeTitles = {
   '/students': '学生管理',
   '/group-photo': '合照识别',
   '/emotion-stats': '情绪统计',
+  '/my-profile': '我的人脸',
 }
 
 const auth = useAuthStore()

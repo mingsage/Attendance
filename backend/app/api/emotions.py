@@ -37,8 +37,13 @@ def emotion_records(
     """查询情绪明细，满足 PPT 对学号、姓名、时间、情绪类型完整记录的要求。"""
 
     query = db.query(EmotionRecord).options(joinedload(EmotionRecord.student))
-    if user.role == "student" and user.student_id:
-        query = query.filter(EmotionRecord.student_id == user.student_id)
+    if user.role == "student":
+        if not user.student_id:
+            return []
+        query = query.filter(
+            EmotionRecord.student_id == user.student_id,
+            EmotionRecord.source == "attendance",
+        )
     if source:
         query = query.filter(EmotionRecord.source == source)
     if keyword:
