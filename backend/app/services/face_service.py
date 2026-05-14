@@ -41,7 +41,7 @@ class FaceService:
 
     # ── 检测 ────────────────────────────────────────────────
 
-    def detect(self, image: np.ndarray, backend: str = "yunet") -> list[dict]:
+    def detect(self, image: np.ndarray, backend: str = "opencv") -> list[dict]:
         """人脸检测，返回 [{"bbox": [x,y,w,h], "confidence": float}]。"""
         try:
             results = self.df.extract_faces(

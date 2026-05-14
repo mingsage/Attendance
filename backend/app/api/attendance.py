@@ -65,7 +65,7 @@ async def detect_faces(
 ):
     """纯人脸检测——只画框，不做识别，80ms 级。"""
     image = await read_image(file)
-    faces = face_service.detect(image, backend="yunet")
+    faces = face_service.detect(image, backend="opencv")
     return {"faces": [{"bbox": f["bbox"]} for f in faces], "count": len(faces)}
 
 
