@@ -16,8 +16,10 @@ http.interceptors.request.use((config) => {
 http.interceptors.response.use(
   (response) => response,
   (error) => {
-    const message = error.response?.data?.detail || error.message || '请求失败'
-    ElMessage.error(message)
+    if (!error.config?.silentError) {
+      const message = error.response?.data?.detail || error.message || '请求失败'
+      ElMessage.error(message)
+    }
     return Promise.reject(error)
   }
 )

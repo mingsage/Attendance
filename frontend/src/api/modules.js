@@ -37,19 +37,19 @@ export const attendanceApi = {
   challenge: () => http.get('/attendance/liveness-challenge'),
   livenessSettings: () => http.get('/attendance/liveness-settings'),
   updateLivenessSettings: (enabled) => http.put('/attendance/liveness-settings', null, { params: { enabled } }),
-  checkIn: (file, courseName, challengeAction = '') => {
+  checkIn: (file, courseName, challengeAction = '', options = {}) => {
     const form = new FormData()
     form.append('file', file)
     const params = { course_name: courseName }
     if (challengeAction) {
       params.challenge_action = challengeAction
     }
-    return http.post('/attendance/check-in', form, { params })
+    return http.post('/attendance/check-in', form, { params, ...options })
   },
-  verifyAction: (blob, challengeAction) => {
+  verifyAction: (blob, challengeAction, options = {}) => {
     const form = new FormData()
     form.append('file', blob)
-    return http.post('/attendance/verify-action', form, { params: { challenge_action: challengeAction } })
+    return http.post('/attendance/verify-action', form, { params: { challenge_action: challengeAction }, ...options })
   },
   records: (params) => http.get('/attendance/records', { params }),
   deleteRecord: (id) => http.delete(`/attendance/records/${id}`),

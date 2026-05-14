@@ -18,6 +18,12 @@
       <div class="camera-wrapper">
         <video ref="videoRef" class="camera" autoplay muted playsinline @loadedmetadata="onVideoReady" />
         <canvas ref="overlayRef" class="camera-overlay" v-show="cameraActive" />
+        <transition name="manual-prompt-fade">
+          <div v-if="manualPromptVisible" class="manual-action-prompt">
+            <el-icon><Timer /></el-icon>
+            <span>{{ currentChallengeText }}</span>
+          </div>
+        </transition>
         <!-- 人脸引导框 -->
         <div v-if="cameraActive" class="face-guide">
           <svg viewBox="0 0 200 260" class="guide-svg">
@@ -50,7 +56,7 @@
         <div v-for="(a, i) in challengeActions" :key="a.code"
           :class="['step-row', completedActions.includes(a.code) ? 'step-done' : (i === challengeStep ? 'step-current' : 'step-pending')]">
           <span class="step-icon">{{ completedActions.includes(a.code) ? '✓' : (i === challengeStep ? '▶' : '○') }}</span>
-          <span class="step-text">{{ a.text }}</span>
+          <span class="step-text">{{ displayChallengeText(a) }}</span>
         </div>
       </div>
       <el-alert
@@ -171,7 +177,19 @@ const challengeStep = ref(0)
 const completedActions = ref([])
 const currentChallengeAction = computed(() => challengeActions.value[challengeStep.value] || null)
 const currentActionCode = computed(() => currentChallengeAction.value?.code || '')
-const currentChallengeText = computed(() => currentChallengeAction.value?.text || '')
+const currentChallengeText = computed(() => displayChallengeText(currentChallengeAction.value))
+const manualPromptVisible = computed(() => (
+  cameraActive.value
+  && livenessEnabled.value
+  && !continuousMode.value
+  && Boolean(currentChallengeText.value)
+))
+const AUTO_CAPTURE_INTERVAL_MS = 500
+const ACTION_PROMPT_MAP = {
+  smile: '请微笑',
+  turn_head: '请左右转头',
+  open_mouth: '请张嘴',
+}
 
 let cameraStream = null
 let detectInterval = null
@@ -273,8 +291,27 @@ async function submit(file) {
     } else {
       ElMessage.error(data.message)
     }
+    await refreshChallengeAfterCheckIn()
   } finally {
     loading.value = false
+  }
+}
+
+function displayChallengeText(action) {
+  if (!action) return ''
+  return ACTION_PROMPT_MAP[action.code] || (action.text || '').replace(/后完成考勤$/, '')
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function refreshChallengeAfterCheckIn() {
+  if (!livenessEnabled.value) return
+  try {
+    await loadChallenge()
+  } catch {
+    ElMessage.warning('活体动作刷新失败，请手动刷新')
   }
 }
 
@@ -378,11 +415,13 @@ async function toggleContinuousCapture() {
 
 function startContinuousLoop() {
   let processing = false
+  let nextAttemptAt = 0
 
   continuousTimer = setInterval(() => {
     if (!continuousMode.value) return
     if (cooldownCount.value > 0) return
     if (processing) return
+    if (Date.now() < nextAttemptAt) return
 
     if (!faceDetected.value) {
       captureStatus.value = '等待人脸…'
@@ -414,16 +453,15 @@ function startContinuousLoop() {
             statusType.value = 'success'
           } else {
             const action = challengeActions.value[step]
-            captureStatus.value = action.text
+            const actionPrompt = displayChallengeText(action)
+            captureStatus.value = actionPrompt
             statusType.value = 'warning'
 
             try {
-              const verifyRes = await attendanceApi.verifyAction(blob, action.code)
+              const verifyRes = await attendanceApi.verifyAction(blob, action.code, { silentError: true })
               if (!verifyRes.data.passed) {
-                const msg = verifyRes.data.message
-                if (msg && msg !== captureStatus.value) {
-                  captureStatus.value = msg
-                }
+                captureStatus.value = actionPrompt
+                nextAttemptAt = Date.now() + AUTO_CAPTURE_INTERVAL_MS
                 return
               }
               // 动作通过 — 保留当前提示直到下次循环更新
@@ -431,6 +469,9 @@ function startContinuousLoop() {
               challengeStep.value++
               return
             } catch {
+              captureStatus.value = actionPrompt
+              statusType.value = 'warning'
+              nextAttemptAt = Date.now() + AUTO_CAPTURE_INTERVAL_MS
               return
             }
           }
@@ -444,7 +485,8 @@ function startContinuousLoop() {
         const { data } = await attendanceApi.checkIn(
           new File([blob], 'check-in.jpg', { type: 'image/jpeg' }),
           courseName.value,
-          currentActionCode.value
+          currentActionCode.value,
+          { silentError: true }
         )
         result.value = data
         statusStep.value = 4
@@ -458,16 +500,18 @@ function startContinuousLoop() {
         }
 
         // 刷新挑战动作，下一轮需重新完成
-        try { loadChallenge() } catch {}
+        await refreshChallengeAfterCheckIn()
         await startCooldown()
       } catch {
-        captureStatus.value = '请求失败'
+        captureStatus.value = '请求失败，稍后重试'
         statusType.value = 'error'
+        nextAttemptAt = Date.now() + AUTO_CAPTURE_INTERVAL_MS
+        await wait(AUTO_CAPTURE_INTERVAL_MS)
       } finally {
         processing = false
       }
     }, 'image/jpeg', 0.95)
-  }, 300)
+  }, AUTO_CAPTURE_INTERVAL_MS)
 }
 
 function startCooldown() {
@@ -553,6 +597,42 @@ onBeforeUnmount(() => {
 .camera-placeholder p {
   margin: 0;
   font-size: 14px;
+}
+
+.manual-action-prompt {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 22px;
+  background: rgba(245, 158, 11, 0.92);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.manual-action-prompt .el-icon {
+  font-size: 18px;
+}
+
+.manual-prompt-fade-enter-active,
+.manual-prompt-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.manual-prompt-fade-enter-from,
+.manual-prompt-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-8px);
 }
 
 /* 人脸引导框 */
