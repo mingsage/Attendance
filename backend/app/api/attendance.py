@@ -58,21 +58,35 @@ def _query_records(db, user, keyword="", status=""):
 
 # ── 轻量识别（不写库）───────────────────────────────────
 
+def _deepface_detect(image: np.ndarray):
+    """DeepFace 人脸检测，返回 [{"bbox": [x,y,w,h]}]。"""
+    from deepface import DeepFace
+    try:
+        results = DeepFace.extract_faces(
+            img_path=image, detector_backend="opencv",
+            enforce_detection=False, align=False,
+        )
+    except Exception:
+        return []
+    faces = []
+    for r in results:
+        area = r.get("facial_area", {})
+        if area:
+            faces.append({
+                "bbox": [area["x"], area["y"], area["w"], area["h"]],
+            })
+    return faces
+
+
 @router.post("/detect")
 async def detect_faces(
     file: UploadFile = File(...),
     _: User = Depends(get_current_user),
 ):
-    """纯人脸检测——只画框，不做识别，80ms 级响应。"""
+    """纯人脸检测——DeepFace 检测，只画框，80ms 级。"""
     image = await read_image(file)
-    details = face_service.detect_face_details(image)
-    return {
-        "faces": [
-            {"bbox": list(f["bbox"])}
-            for f in details
-        ],
-        "count": len(details),
-    }
+    faces = _deepface_detect(image)
+    return {"faces": faces, "count": len(faces)}
 
 
 @router.post("/recognize", response_model=RecognizeResponse)
@@ -80,10 +94,10 @@ async def recognize(
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
 ):
-    """轻量识别：检测人脸 + 与当前登录用户 1:1 比对，不写库。"""
+    """轻量识别：DeepFace 检测 + ArcFace 提取 + 1:1 比对，不写库。"""
     image = await read_image(file)
-    details = face_service.detect_face_details(image)
-    if not details:
+    df_faces = _deepface_detect(image)
+    if not df_faces:
         return RecognizeResponse(faces=[], face_count=0, matched=False)
 
     # 1:1 比对——只比对当前登录学生的人脸
@@ -96,25 +110,24 @@ async def recognize(
 
     faces: list[RecognizeFace] = []
     matched_any = False
-    for face_info in details:
-        bbox = list(face_info["bbox"])
-        probe = face_info.get("embedding")
-        if probe is None:
+    for df in df_faces:
+        bbox = df["bbox"]
+        # 裁剪人脸区域后用 ArcFace 提取特征
+        x, y, w, h = bbox
+        face_crop = image[max(0, y):y+h, max(0, x):x+w]
+        probe = face_service.extract_detected_feature(face_crop)
+        if probe is None or target_encoding is None or probe.shape != target_encoding.shape:
             faces.append(RecognizeFace(bbox=bbox, matched=False))
             continue
-        if target_encoding is not None and target_encoding.shape == probe.shape:
-            cosine = float(np.dot(probe, target_encoding) /
-                          (np.linalg.norm(probe) * np.linalg.norm(target_encoding) + 1e-6))
-            confidence = round((cosine + 1.0) / 2.0, 3)
-            if confidence >= get_settings().face_threshold:
-                matched_any = True
-                faces.append(RecognizeFace(
-                    bbox=bbox, matched=True,
-                    student=_student_out(target_student),
-                    confidence=confidence,
-                ))
-                continue
-        faces.append(RecognizeFace(bbox=bbox, matched=False))
+        cosine = float(np.dot(probe, target_encoding) /
+                      (np.linalg.norm(probe) * np.linalg.norm(target_encoding) + 1e-6))
+        confidence = round((cosine + 1.0) / 2.0, 3)
+        if confidence >= get_settings().face_threshold:
+            matched_any = True
+            faces.append(RecognizeFace(bbox=bbox, matched=True,
+                          student=_student_out(target_student), confidence=confidence))
+        else:
+            faces.append(RecognizeFace(bbox=bbox, matched=False, confidence=confidence))
     return RecognizeResponse(faces=faces, face_count=len(faces), matched=matched_any)
 
 
