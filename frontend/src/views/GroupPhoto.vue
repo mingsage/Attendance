@@ -42,6 +42,9 @@
               <span class="summary-label">未识别</span>
             </div>
           </div>
+          <div class="export-bar">
+            <el-button type="primary" :icon="Download" size="small" @click="exportList">导出名单</el-button>
+          </div>
         </div>
       </transition>
 
@@ -85,7 +88,8 @@
 <script setup>
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { groupPhotoApi } from '../api/modules'
+import { Download } from '@element-plus/icons-vue'
+import { groupPhotoApi, statisticsApi } from '../api/modules'
 import StudentDetail from '../components/StudentDetail.vue'
 
 const EMOTION_MAP = {
@@ -147,11 +151,21 @@ async function startRecognize() {
   try {
     const { data } = await groupPhotoApi.recognize(currentFile, activityName.value)
     summary.value = data
-    results.value = data.results
+    results.value = data.recognized
     ElMessage.success(`识别完成：${data.recognized_count} 人`)
   } finally {
     recognizing.value = false
   }
+}
+
+async function exportList() {
+  const { data } = await statisticsApi.activityExport(activityName.value)
+  const url = URL.createObjectURL(data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${activityName.value}-活动参与名单.xlsx`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 </script>
 
@@ -254,6 +268,12 @@ async function startRecognize() {
   width: 1px;
   height: 40px;
   background: #e5e7eb;
+}
+
+.export-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 @keyframes fadeIn {

@@ -14,8 +14,8 @@ from app.models.attendance import AttendanceRecord
 from app.models.emotion import EmotionRecord
 from app.models.student import Student
 from app.models.user import User
-from app.schemas.statistics import ActivityItem, CountItem
-from app.services.export_service import build_attendance_stats_workbook
+from app.schemas.statistics import ActivityDetailItem, ActivityItem, CountItem
+from app.services.export_service import build_activity_workbook, build_attendance_stats_workbook
 
 
 router = APIRouter(prefix="/statistics", tags=["统计"])
@@ -159,3 +159,111 @@ def activity_stats(db: Session = Depends(get_db), _: User = Depends(get_current_
         .all()
     )
     return [ActivityItem(student_no=no, name=name, class_name=klass, count=count) for no, name, klass, count in rows]
+
+
+@router.get("/activity-detail", response_model=list[ActivityDetailItem])
+def activity_detail(
+    activity_name: str = "",
+    activity_date: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """按活动/日期查询参与名单，含学号、姓名、情绪。"""
+    query = (
+        db.query(
+            ActivityParticipation.activity_name,
+            ActivityParticipation.activity_date,
+            Student.student_no,
+            Student.name,
+            Student.class_name,
+            ActivityParticipation.confidence,
+            Student.id,
+        )
+        .join(Student, ActivityParticipation.student_id == Student.id)
+    )
+    if activity_name:
+        query = query.filter(ActivityParticipation.activity_name.contains(activity_name))
+    if activity_date:
+        query = query.filter(ActivityParticipation.activity_date == activity_date)
+
+    rows = query.order_by(ActivityParticipation.activity_date.desc(), Student.student_no).all()
+
+    # 匹配情绪记录（group_photo 来源）
+    emotion_map: dict[int, str] = {}
+    for er in db.query(EmotionRecord).filter(EmotionRecord.source == "group_photo").order_by(EmotionRecord.timestamp.desc()).all():
+        if er.student_id not in emotion_map:
+            emotion_map[er.student_id] = er.emotion_type
+
+    results = []
+    for act_name, act_date, student_no, s_name, class_name, confidence, sid in rows:
+        results.append(
+            ActivityDetailItem(
+                activity_name=act_name,
+                activity_date=str(act_date),
+                student_no=student_no,
+                name=s_name,
+                class_name=class_name,
+                confidence=round(confidence or 0, 4),
+                emotion=emotion_map.get(sid),
+            )
+        )
+    return results
+
+
+@router.get("/activity-export")
+def activity_export(
+    activity_name: str = "",
+    activity_date: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """导出活动参与名单 Excel。"""
+    query = (
+        db.query(
+            ActivityParticipation.activity_name,
+            ActivityParticipation.activity_date,
+            Student.student_no,
+            Student.name,
+            Student.class_name,
+            ActivityParticipation.confidence,
+            Student.id,
+        )
+        .join(Student, ActivityParticipation.student_id == Student.id)
+    )
+    if activity_name:
+        query = query.filter(ActivityParticipation.activity_name.contains(activity_name))
+    if activity_date:
+        query = query.filter(ActivityParticipation.activity_date == activity_date)
+
+    rows = query.order_by(ActivityParticipation.activity_date.desc(), Student.student_no).all()
+
+    # 匹配情绪
+    emotion_map: dict[int, str] = {}
+    for er in db.query(EmotionRecord).filter(EmotionRecord.source == "group_photo").order_by(EmotionRecord.timestamp.desc()).all():
+        if er.student_id not in emotion_map:
+            emotion_map[er.student_id] = er.emotion_type
+
+    records = []
+    for act_name, act_date, student_no, s_name, class_name, confidence, sid in rows:
+        records.append({
+            "activity_name": act_name,
+            "activity_date": str(act_date),
+            "student_no": student_no,
+            "name": s_name,
+            "class_name": class_name,
+            "confidence": round(confidence or 0, 4),
+            "emotion": emotion_map.get(sid, ""),
+        })
+
+    if not records:
+        raise HTTPException(status_code=404, detail="没有找到匹配的活动记录")
+
+    safe_name = quote(activity_name or "活动", safe="")
+    filename = f"activity-{safe_name}-{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+    stream = build_activity_workbook(records)
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )

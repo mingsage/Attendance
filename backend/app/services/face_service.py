@@ -196,14 +196,30 @@ class FaceService:
         return feature
 
     def extract_feature(self, image: np.ndarray, box: tuple[int, int, int, int] | None = None) -> np.ndarray:
-        """提取特征；仅用于兼容旧接口（如合照识别），必要时会回退到中心区域。"""
+        """提取特征；仅用于兼容旧接口，必要时会回退到中心区域。"""
 
         if self.use_sface and self.recognizer is not None:
             sface_rows = self._detect_sface_rows(image)
             face = sface_rows[0] if sface_rows else self._approx_sface_row(box or self.center_face_box(image))
-            # 只用原始图像做 alignCrop，CLAHE 在 _sface_feature_from_row 内部对对齐后人脸做一次
             return self._sface_feature_from_row(image, face)
         return self._manual_feature(image, box or self.center_face_box(image))
+
+    def extract_feature_by_box(self, image: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray | None:
+        """根据检测到的人脸框提取 SFace 特征，不重新检测。
+
+        合照识别用：避免 `extract_feature` 内部重新检测带来的错位问题。
+        若 SFace 不可用则回退到 `_manual_feature`。
+        """
+        if self.use_sface and self.recognizer is not None:
+            face = self._approx_sface_row(box)
+            try:
+                return self._sface_feature_from_row(image, face)
+            except Exception:
+                return None
+        try:
+            return self._manual_feature(image, box)
+        except Exception:
+            return None
 
     def extract_detected_feature(self, image: np.ndarray) -> np.ndarray | None:
         """只在检测到真实人脸时提取特征，供入库和摄像头考勤使用。"""

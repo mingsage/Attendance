@@ -133,3 +133,31 @@ def build_attendance_stats_workbook(students: list[dict], dates: list[str]) -> B
     wb.save(stream)
     stream.seek(0)
     return stream
+
+
+def build_activity_workbook(records: list[dict]) -> BytesIO:
+    """把活动参与记录导出为 Excel。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "活动参与名单"
+
+    headers = ["活动名称", "日期", "学号", "姓名", "班级", "置信度", "情绪"]
+    ws.append(headers)
+
+    for r in records:
+        ws.append([
+            r["activity_name"],
+            r["activity_date"],
+            r["student_no"],
+            r["name"],
+            r["class_name"],
+            r["confidence"],
+            r.get("emotion") or "",
+        ])
+
+    _style_header(ws, {1: 20, 2: 14, 3: 16, 4: 10, 5: 16, 6: 12, 7: 10})
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    return stream

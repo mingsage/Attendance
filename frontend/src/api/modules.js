@@ -71,7 +71,8 @@ export const statisticsApi = {
   attendanceStats: (courseName = '', date = '') => http.get('/statistics/attendance-stats', { params: { course_name: courseName, attendance_date: date } }),
   courseList: () => http.get('/statistics/course-list'),
   courseDates: (courseName = '') => http.get('/statistics/course-dates', { params: { course_name: courseName } }),
-  attendanceExport: (courseName) => http.get('/statistics/attendance-export', { params: { course_name: courseName }, responseType: 'blob' })
+  attendanceExport: (courseName) => http.get('/statistics/attendance-export', { params: { course_name: courseName }, responseType: 'blob' }),
+  activityExport: (activityName = '') => http.get('/statistics/activity-export', { params: { activity_name: activityName }, responseType: 'blob' })
 }
 
 export const emotionApi = {
