@@ -2,6 +2,8 @@ from datetime import date, datetime
 from random import choice
 from zoneinfo import ZoneInfo
 
+import numpy as np
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
@@ -56,42 +58,25 @@ def _query_records(db, user, keyword="", status=""):
 
 # ── 轻量识别（不写库）───────────────────────────────────
 
-# 候选人缓存（每 30 秒刷新）
-_candidates_cache: list = []
-_candidates_ts: float = 0
-
-
-def _get_candidates():
-    global _candidates_cache, _candidates_ts
-    import time
-    now = time.time()
-    if _candidates_cache and now - _candidates_ts < 30:
-        return _candidates_cache
-    from app.core.database import SessionLocal
-    db = SessionLocal()
-    try:
-        _candidates_cache = [
-            (s.id, decode_array(s.face_encoding), s.face_image_path)
-            for s in db.query(Student).filter(Student.face_encoding.isnot(None)).all()
-        ]
-        _candidates_ts = now
-    finally:
-        db.close()
-    return _candidates_cache
-
-
 @router.post("/recognize", response_model=RecognizeResponse)
 async def recognize(
     file: UploadFile = File(...),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    """轻量识别：检测人脸 + 比对，不写库，用于前端实时预览。"""
+    """轻量识别：检测人脸 + 与当前登录用户 1:1 比对，不写库。"""
     image = await read_image(file)
     details = face_service.detect_face_details(image)
     if not details:
         return RecognizeResponse(faces=[], face_count=0, matched=False)
 
-    candidates = _get_candidates()
+    # 1:1 比对——只比对当前登录学生的人脸
+    target_encoding = None
+    target_student = None
+    if user.role == "student" and user.student_id:
+        target_student = db_get_student(user.student_id)
+        if target_student and target_student.face_encoding:
+            target_encoding = decode_array(target_student.face_encoding)
+
     faces: list[RecognizeFace] = []
     matched_any = False
     for face_info in details:
@@ -100,25 +85,33 @@ async def recognize(
         if probe is None:
             faces.append(RecognizeFace(bbox=bbox, matched=False))
             continue
-        matched_id, confidence = face_service.identify(image, probe, candidates)
-        if matched_id and confidence >= get_settings().face_threshold:
-            matched_any = True
-            from app.core.database import SessionLocal
-            db = SessionLocal()
-            try:
-                faces.append(RecognizeFace(bbox=bbox, matched=True, student=_get_student_out(db, matched_id), confidence=confidence))
-            finally:
-                db.close()
-        else:
-            faces.append(RecognizeFace(bbox=bbox, matched=False, confidence=confidence))
+        if target_encoding is not None and target_encoding.shape == probe.shape:
+            cosine = float(np.dot(probe, target_encoding) /
+                          (np.linalg.norm(probe) * np.linalg.norm(target_encoding) + 1e-6))
+            confidence = round((cosine + 1.0) / 2.0, 3)
+            if confidence >= get_settings().face_threshold:
+                matched_any = True
+                faces.append(RecognizeFace(
+                    bbox=bbox, matched=True,
+                    student=_student_out(target_student),
+                    confidence=confidence,
+                ))
+                continue
+        faces.append(RecognizeFace(bbox=bbox, matched=False))
     return RecognizeResponse(faces=faces, face_count=len(faces), matched=matched_any)
 
 
-def _get_student_out(db, student_id):
+def db_get_student(student_id: int):
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        return db.get(Student, student_id)
+    finally:
+        db.close()
+
+
+def _student_out(s):
     from app.schemas.student import StudentOut
-    s = db.get(Student, student_id)
-    if not s:
-        return None
     return StudentOut(
         id=s.id, student_no=s.student_no, name=s.name, class_name=s.class_name,
         gender=s.gender, grade=s.grade, major=s.major,
@@ -127,6 +120,7 @@ def _get_student_out(db, student_id):
         face_image_path=s.face_image_path, face_image_url=None,
         face_status=s.face_status,
     )
+
 
 
 # ── 正式提交考勤（活体 + 写入）──────────────────────────

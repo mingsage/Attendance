@@ -114,7 +114,7 @@ function startRecognition() {
   recogTimer = setInterval(() => {
     if (!cameraActive.value || mode.value !== 'realtime' || recogBusy) return
     captureAndRecognize()
-  }, 1500)
+  }, 80)
 }
 
 function captureAndRecognize() {
