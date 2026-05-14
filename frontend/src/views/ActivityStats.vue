@@ -45,6 +45,7 @@
     </template>
 
     <div class="section">
+      <div v-if="!selectedDate" ref="chartRef" class="chart" />
       <el-table :data="rows" style="margin-top: 16px">
         <el-table-column type="index" label="#" width="50" />
         <el-table-column prop="student_no" label="学号">
@@ -76,8 +77,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Download, Refresh, Search } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
 import { statisticsApi } from '../api/modules'
 import StudentDetail from '../components/StudentDetail.vue'
 
@@ -88,6 +90,8 @@ const selectedCourse = ref('')
 const selectedDate = ref('')
 const detailVisible = ref(false)
 const detailStudentId = ref(null)
+const chartRef = ref(null)
+let chart = null
 
 const signedList = computed(() => rows.value.filter((r) => r.count))
 const absentList = computed(() => rows.value.filter((r) => !r.count))
@@ -109,6 +113,19 @@ function showDetail(row) {
 async function load() {
   const { data } = await statisticsApi.attendanceStats(selectedCourse.value, selectedDate.value)
   rows.value = data
+  if (!selectedDate.value && data.length) await nextTick(); renderChart(data)
+}
+
+function renderChart(data) {
+  if (!chartRef.value) return
+  if (!chart) chart = echarts.init(chartRef.value)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { data: data.slice(0, 30).map(r => r.name), axisLabel: { rotate: 45, fontSize: 11 } },
+    yAxis: { name: '出勤天数' },
+    series: [{ type: 'bar', data: data.slice(0, 30).map(r => r.count), itemStyle: { color: '#409eff' } }],
+    grid: { bottom: 100 }
+  })
 }
 
 async function loadCourses() {

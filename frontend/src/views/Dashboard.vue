@@ -1,5 +1,22 @@
 <template>
-  <div class="page">
+  <!-- 学生仪表盘 -->
+  <div v-if="auth.role === 'student'" class="page">
+    <div class="toolbar"><h2>我的面板</h2></div>
+    <div class="student-summary">
+      <div class="s-card"><span class="s-label">应到</span><span class="s-value">{{ studentSummary.total }}</span></div>
+      <div class="s-card"><span class="s-label">已签</span><span class="s-value signed">{{ studentSummary.attended }}</span></div>
+      <div class="s-card"><span class="s-label">缺签</span><span class="s-value absent">{{ studentSummary.missed }}</span></div>
+      <div class="s-card rate"><span class="s-label">到课率</span><span class="s-value">{{ studentSummary.rate }}</span></div>
+    </div>
+    <div class="section" style="margin-top:16px">
+      <el-button type="primary" @click="$router.push('/attendance')">去签到</el-button>
+      <el-button @click="$router.push('/my-attendance')">考勤详情</el-button>
+      <el-button @click="$router.push('/my-face')">我的人脸</el-button>
+    </div>
+  </div>
+
+  <!-- 教师仪表盘 -->
+  <div v-else class="page">
     <div class="toolbar">
       <h2>总览</h2>
       <el-button :icon="Refresh" size="small" @click="load">刷新</el-button>
@@ -64,11 +81,14 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { Check, Close, Histogram, Refresh, User } from '@element-plus/icons-vue'
+import { useAuthStore } from '../stores/auth'
 import { statisticsApi, attendanceApi } from '../api/modules'
 import StudentDetail from '../components/StudentDetail.vue'
 
+const auth = useAuthStore()
 const detailVisible = ref(false)
 const detailStudentId = ref(null)
+const studentSummary = reactive({ total: 0, attended: 0, missed: 0, rate: '0%' })
 
 function showDetail(student) {
   if (student?.id) {
@@ -89,5 +109,9 @@ async function load() {
   recentRecords.value = recordsResp.data
 }
 
-onMounted(load)
+async function loadStudent() {
+  try { const { data } = await attendanceApi.myRecords(); Object.assign(studentSummary, data.summary) } catch {}
+}
+
+onMounted(() => { if (auth.role === 'student') loadStudent(); else load() })
 </script>

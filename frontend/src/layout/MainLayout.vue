@@ -23,6 +23,7 @@
           <el-menu-item index="/students"><el-icon><User /></el-icon><span>学生管理</span></el-menu-item>
           <el-menu-item index="/emotion-stats"><el-icon><TrendCharts /></el-icon><span>情绪统计</span></el-menu-item>
           <el-menu-item index="/activity-stats"><el-icon><Histogram /></el-icon><span>考勤统计</span></el-menu-item>
+          <el-menu-item index="/supplements"><el-icon><Checked /></el-icon><span>补录审核</span></el-menu-item>
         </template>
         <template v-else>
           <el-menu-item index="/attendance"><el-icon><Camera /></el-icon><span>考勤签到</span></el-menu-item>
@@ -75,6 +76,7 @@ const routeTitles = {
   '/group-photo': '合照识别',
   '/emotion-stats': '情绪统计',
   '/activity-stats': '考勤统计',
+  '/supplements': '补录审核',
 }
 
 const auth = useAuthStore()
