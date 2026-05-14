@@ -30,6 +30,7 @@ from app.services.image_utils import read_image
 router = APIRouter(prefix="/students", tags=["学生管理"])
 
 FACE_NOT_FOUND = "未检测到清晰人脸，请使用正脸、光线充足、无遮挡的照片"
+DEFAULT_STUDENT_PASSWORD = "123456"
 
 
 def parse_face_filename(
@@ -66,14 +67,33 @@ def to_out(student: Student) -> StudentOut:
     )
 
 
-def _ensure_student_user(student: Student, db: Session) -> User:
-    """确保学生有对应的登录账号（username=密码=学号）。"""
+def _ensure_student_user(
+    student: Student, db: Session, reset_password: bool = False
+) -> User:
+    """确保学生有对应的登录账号（username=学号，默认密码=123456）。"""
     existing = db.query(User).filter(User.student_id == student.id).first()
+    username_user = db.query(User).filter(User.username == student.student_no).first()
     if existing:
+        if username_user and username_user.id != existing.id:
+            raise HTTPException(status_code=400, detail="学号对应的登录账号已存在")
+        existing.username = student.student_no
+        existing.role = "student"
+        if reset_password:
+            existing.password_hash = hash_password(DEFAULT_STUDENT_PASSWORD)
         return existing
+    if username_user:
+        if username_user.role != "student":
+            raise HTTPException(status_code=400, detail="学号对应的登录账号已被其他角色使用")
+        if username_user.student_id and username_user.student_id != student.id:
+            raise HTTPException(status_code=400, detail="学号对应的登录账号已绑定其他学生")
+        username_user.role = "student"
+        username_user.student_id = student.id
+        if reset_password:
+            username_user.password_hash = hash_password(DEFAULT_STUDENT_PASSWORD)
+        return username_user
     user = User(
         username=student.student_no,
-        password_hash=hash_password(student.student_no),
+        password_hash=hash_password(DEFAULT_STUDENT_PASSWORD),
         role="student",
         student_id=student.id,
     )
@@ -187,10 +207,10 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="学号已存在")
     student = Student(**payload.model_dump())
     db.add(student)
-    db.commit()
-    db.refresh(student)
+    db.flush()
     _ensure_student_user(student, db)
     db.commit()
+    db.refresh(student)
     return to_out(student)
 
 
@@ -203,11 +223,39 @@ def update_student(
     student = db.get(Student, student_id)
     if not student:
         raise HTTPException(status_code=404, detail="学生不存在")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    new_student_no = updates.get("student_no")
+    if new_student_no and new_student_no != student.student_no:
+        duplicate = (
+            db.query(Student)
+            .filter(Student.student_no == new_student_no, Student.id != student.id)
+            .first()
+        )
+        if duplicate:
+            raise HTTPException(status_code=400, detail="学号已存在")
+    for key, value in updates.items():
         setattr(student, key, value)
+    _ensure_student_user(student, db)
     db.commit()
     db.refresh(student)
     return to_out(student)
+
+
+@router.post(
+    "/{student_id}/reset-password",
+    dependencies=[Depends(require_teacher)],
+)
+def reset_student_password(student_id: int, db: Session = Depends(get_db)):
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="学生不存在")
+    user = _ensure_student_user(student, db, reset_password=True)
+    db.commit()
+    return {
+        "ok": True,
+        "username": user.username,
+        "default_password": DEFAULT_STUDENT_PASSWORD,
+    }
 
 
 @router.delete("/{student_id}", dependencies=[Depends(require_teacher)])

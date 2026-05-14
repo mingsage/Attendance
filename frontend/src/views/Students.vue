@@ -2,8 +2,8 @@
   <div class="page">
     <div class="toolbar">
       <h2>学生管理</h2>
-      <div>
-        <el-input v-model="keyword" placeholder="姓名/学号" style="width: 180px; margin-right: 8px" clearable @clear="load" />
+      <div class="toolbar-group">
+        <el-input v-model="keyword" placeholder="姓名/学号" class="search-input" clearable @clear="load" />
         <el-button :icon="Search" @click="load">查询</el-button>
         <input ref="batchInputRef" hidden type="file" accept="image/png,image/jpeg" multiple @change="batchChanged" />
         <el-button :icon="FolderAdd" @click="batchInputRef.click()">批量导入人脸</el-button>
@@ -35,12 +35,15 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="280">
+      <el-table-column label="操作" width="390" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" :icon="CameraFilled" @click.stop="openFaceDialog(row)">录入人脸</el-button>
-          <input ref="faceUploadInput" hidden type="file" accept="image/png,image/jpeg" @change="handleFileChange" />
-          <el-button size="small" :icon="Edit" @click.stop="openEdit(row)">编辑</el-button>
-          <el-button size="small" type="danger" :icon="Delete" @click.stop="remove(row)">删除</el-button>
+          <div class="action-buttons">
+            <el-button size="small" :icon="CameraFilled" @click.stop="openFaceDialog(row)">录入人脸</el-button>
+            <input ref="faceUploadInput" hidden type="file" accept="image/png,image/jpeg" @change="handleFileChange" />
+            <el-button size="small" :icon="Key" @click.stop="resetPassword(row)">重置密码</el-button>
+            <el-button size="small" :icon="Edit" @click.stop="openEdit(row)">编辑</el-button>
+            <el-button size="small" type="danger" :icon="Delete" @click.stop="remove(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -162,7 +165,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  CameraFilled, Check, Delete, Edit, FolderAdd, Plus, Search, UploadFilled
+  CameraFilled, Check, Delete, Edit, FolderAdd, Key, Plus, Search, UploadFilled
 } from '@element-plus/icons-vue'
 import { studentApi } from '../api/modules'
 
@@ -249,6 +252,24 @@ async function batchRemove() {
   }
   tableRef.value?.clearSelection()
   await load()
+}
+
+async function resetPassword(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定将 ${row.name}（${row.student_no}）的密码重置为 123456 吗？`,
+      '重置密码',
+      {
+        confirmButtonText: '重置',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  const { data } = await studentApi.resetPassword(row.id)
+  ElMessage.success(`已重置 ${data.username} 的密码为 ${data.default_password}`)
 }
 
 // ---- 人脸录入 ----
@@ -370,6 +391,28 @@ onMounted(load)
   display: flex;
   gap: 24px;
   align-items: flex-start;
+}
+
+.toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.search-input {
+  width: 180px;
+}
+
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.action-buttons .el-button + .el-button {
+  margin-left: 0;
 }
 
 .detail-photo {

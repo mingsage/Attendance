@@ -11,6 +11,7 @@ export const studentApi = {
   getByNo: (studentNo) => http.get(`/students/by-no/${studentNo}`),
   create: (data) => http.post('/students', data),
   update: (id, data) => http.put(`/students/${id}`, data),
+  resetPassword: (id) => http.post(`/students/${id}/reset-password`),
   remove: (id) => http.delete(`/students/${id}`),
   batchDelete: (studentIds) => http.post('/students/batch-delete', { student_ids: studentIds }),
   uploadFace: (id, file) => {
