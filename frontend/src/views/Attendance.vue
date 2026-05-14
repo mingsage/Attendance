@@ -111,40 +111,55 @@ function stopRecognition() { if (recogTimer) { clearInterval(recogTimer); recogT
 
 function startRecognition() {
   stopRecognition()
+  // 快速检测画框：80ms
   recogTimer = setInterval(() => {
-    if (!cameraActive.value || mode.value !== 'realtime' || recogBusy) return
-    captureAndRecognize()
+    if (!cameraActive.value || mode.value !== 'realtime') return
+    detectAndDraw()
   }, 80)
+  // 身份匹配：600ms
+  setInterval(() => {
+    if (!cameraActive.value || mode.value !== 'realtime' || recogBusy) return
+    checkIdentity()
+  }, 600)
 }
 
-function captureAndRecognize() {
+function captureFrame(callback, quality = 0.5) {
   const video = videoRef.value; if (!video?.videoWidth) return
-  recogBusy = true
-  // 缩小分辨率加速传输和检测
   const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight))
   const canvas = document.createElement('canvas')
   canvas.width = Math.round(video.videoWidth * scale)
   canvas.height = Math.round(video.videoHeight * scale)
   canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
-  canvas.toBlob(async (blob) => {
+  canvas.toBlob(callback, 'image/jpeg', quality)
+}
+
+function detectAndDraw() {
+  captureFrame(async (blob) => {
+    if (!blob) return
+    try {
+      const { data } = await attendanceApi.detect(new File([blob], 'd.jpg', { type: 'image/jpeg' }))
+      drawFaceBoxes(data.faces)
+    } catch {}
+  }, 0.4)
+}
+
+function checkIdentity() {
+  recogBusy = true
+  captureFrame(async (blob) => {
     if (!blob) { recogBusy = false; return }
-    lastRecognizeFile = new File([blob], 'recog.jpg', { type: 'image/jpeg' })
+    lastRecognizeFile = new File([blob], 'r.jpg', { type: 'image/jpeg' })
     try {
       const { data } = await attendanceApi.recognize(lastRecognizeFile)
-      drawFaceBoxes(data.faces)
+      recognized.value = data.matched
       if (data.matched) {
         const mf = data.faces.find(f => f.matched && f.student)
-        if (mf) {
-          recognized.value = true
-          recognizedName.value = mf.student.name
-          recogConfidence.value = (mf.confidence * 100).toFixed(1)
-        }
-      } else {
-        recognized.value = false
+        if (mf) { recognizedName.value = mf.student.name; recogConfidence.value = (mf.confidence * 100).toFixed(1) }
       }
+      // 用识别结果更新框的颜色
+      drawFaceBoxes(data.faces)
     } catch { recognized.value = false }
     recogBusy = false
-  }, 'image/jpeg', 0.6)
+  }, 0.5)
 }
 
 function drawFaceBoxes(faces) {

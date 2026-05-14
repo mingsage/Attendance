@@ -58,6 +58,23 @@ def _query_records(db, user, keyword="", status=""):
 
 # ── 轻量识别（不写库）───────────────────────────────────
 
+@router.post("/detect")
+async def detect_faces(
+    file: UploadFile = File(...),
+    _: User = Depends(get_current_user),
+):
+    """纯人脸检测——只画框，不做识别，80ms 级响应。"""
+    image = await read_image(file)
+    details = face_service.detect_face_details(image)
+    return {
+        "faces": [
+            {"bbox": list(f["bbox"])}
+            for f in details
+        ],
+        "count": len(details),
+    }
+
+
 @router.post("/recognize", response_model=RecognizeResponse)
 async def recognize(
     file: UploadFile = File(...),

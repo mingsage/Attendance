@@ -27,6 +27,7 @@ export const studentApi = {
 }
 
 export const attendanceApi = {
+  detect: (file) => { const f = new FormData(); f.append('file', file); return http.post('/attendance/detect', f) },
   recognize: (file) => { const f = new FormData(); f.append('file', file); return http.post('/attendance/recognize', f) },
   checkIn: (file, courseName, sessionId, challengeAction) => {
     const form = new FormData(); form.append('file', file)
