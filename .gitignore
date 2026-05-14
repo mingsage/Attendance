@@ -9,3 +9,5 @@ uploads/
 *.xlsx
 .claude/
 face_data/*
+.claude/*
+.vscode/*
