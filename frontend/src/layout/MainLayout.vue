@@ -18,7 +18,6 @@
         <template v-if="auth.role === 'teacher'">
           <el-menu-item index="/dashboard"><el-icon><DataBoard /></el-icon><span>总览</span></el-menu-item>
           <el-menu-item index="/courses"><el-icon><Reading /></el-icon><span>课程管理</span></el-menu-item>
-          <el-menu-item index="/groups"><el-icon><Connection /></el-icon><span>群组管理</span></el-menu-item>
           <el-menu-item index="/records"><el-icon><Tickets /></el-icon><span>考勤记录</span></el-menu-item>
           <el-menu-item index="/group-photo"><el-icon><Picture /></el-icon><span>合照识别</span></el-menu-item>
           <el-menu-item index="/students"><el-icon><User /></el-icon><span>学生管理</span></el-menu-item>

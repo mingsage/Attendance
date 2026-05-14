@@ -16,7 +16,6 @@ const routes = [
       // 教师
       { path: 'records', component: () => import('../views/Records.vue') },
       { path: 'students', component: () => import('../views/Students.vue') },
-      { path: 'groups', component: () => import('../views/GroupManage.vue') },
       { path: 'courses', component: () => import('../views/CourseManage.vue') },
       { path: 'group-photo', component: () => import('../views/GroupPhoto.vue') },
       // 通用
@@ -35,7 +34,7 @@ router.beforeEach((to) => {
     return auth.role === 'teacher' ? '/dashboard' : '/attendance'
   }
   // 学生不允许访问教师页面
-  const teacherOnly = ['/records', '/students', '/groups', '/courses', '/group-photo']
+  const teacherOnly = ['/records', '/students', '/courses', '/group-photo']
   if (auth.role === 'student' && teacherOnly.includes(to.path)) return '/attendance'
   return true
 })
