@@ -6,7 +6,7 @@ import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_teacher
+from app.api.deps import get_current_user, require_teacher
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import (
@@ -380,3 +380,109 @@ def rebuild_face_features(db: Session = Depends(get_db)):
         "rebuilt": rebuilt,
         "failed": failed,
     }
+
+
+# ── 学生自助人脸（学生端）─────────────────────────────
+
+@router.post("/self/face", response_model=StudentOut)
+async def self_upload_face(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """学生自助上传自己的人脸。"""
+    if user.role != "student" or not user.student_id:
+        raise HTTPException(status_code=403, detail="仅学生可操作")
+    student = db.get(Student, user.student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="学生信息不存在")
+
+    image = await read_image(file)
+    feature = face_service.extract_detected_feature(image)
+    if feature is None:
+        raise HTTPException(status_code=400, detail=FACE_NOT_FOUND)
+    if student.face_encoding is not None:
+        # 已有照片：需要自拍验证
+        old = decode_array(student.face_encoding)
+        if old.shape == feature.shape:
+            cosine = float(np.dot(feature, old) / (np.linalg.norm(feature) * np.linalg.norm(old) + 1e-6))
+            sim = (cosine + 1.0) / 2.0
+            if sim < 0.65:
+                student.face_status = "pending"
+                student.face_image_path = save_face_image(student, image, file.filename)
+                merge_face_feature(student, feature)
+                db.commit()
+                db.refresh(student)
+                raise HTTPException(status_code=400, detail=f"人脸验证未通过(相似度{sim:.1%})，已提交教师审核")
+    student.face_status = "approved"
+    student.face_image_path = save_face_image(student, image, file.filename)
+    merge_face_feature(student, feature)
+    db.commit()
+    db.refresh(student)
+    return to_out(student)
+
+
+@router.post("/self/verify", response_model=dict)
+async def self_verify_face(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """学生自拍验证是否为本人（已有照片时）。"""
+    if user.role != "student" or not user.student_id:
+        raise HTTPException(status_code=403, detail="仅学生可操作")
+    student = db.get(Student, user.student_id)
+    if not student or student.face_encoding is None:
+        return {"verified": False, "message": "未录入人脸，无需验证"}
+
+    image = await read_image(file)
+    feature = face_service.extract_detected_feature(image)
+    if feature is None:
+        raise HTTPException(status_code=400, detail=FACE_NOT_FOUND)
+
+    old = decode_array(student.face_encoding)
+    if old.shape != feature.shape:
+        return {"verified": False, "message": "特征维度不匹配，请联系管理员重建人脸"}
+    cosine = float(np.dot(feature, old) / (np.linalg.norm(feature) * np.linalg.norm(old) + 1e-6))
+    sim = (cosine + 1.0) / 2.0
+    return {"verified": sim >= 0.65, "similarity": round(sim, 3)}
+
+
+@router.get("/self/profile", response_model=StudentOut)
+def self_profile(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.role != "student" or not user.student_id:
+        raise HTTPException(status_code=403, detail="仅学生可操作")
+    student = db.get(Student, user.student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="学生信息不存在")
+    return to_out(student)
+
+
+# ── 教师批量创建学生账号 ────────────────────────────────
+
+@router.post("/batch-accounts", dependencies=[Depends(require_teacher)])
+def batch_create_accounts(
+    payload: dict,  # { student_ids: [1,2,3], default_password: "123456" }
+    db: Session = Depends(get_db),
+):
+    from app.core.security import hash_password
+    ids = payload.get("student_ids", [])
+    pwd = payload.get("default_password", "123456")
+    students = db.query(Student).filter(Student.id.in_(ids)).all()
+    created = 0
+    for s in students:
+        existing = db.query(User).filter(User.student_id == s.id).first()
+        if existing:
+            continue
+        db.add(User(
+            username=s.student_no,
+            password_hash=hash_password(pwd),
+            role="student",
+            student_id=s.id,
+        ))
+        created += 1
+    db.commit()
+    return {"created_count": created, "total": len(ids)}
