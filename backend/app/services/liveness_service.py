@@ -21,6 +21,7 @@ class LivenessService:
 
     def __init__(self) -> None:
         self._deepface = None
+        self.smile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_smile.xml")
         try:
             from deepface import DeepFace
 
@@ -158,7 +159,15 @@ class LivenessService:
     #  综合判断
     # ------------------------------------------------------------------
 
-    def analyze(self, image: np.ndarray) -> tuple[float, str]:
+    def analyze(self, image: np.ndarray) -> tuple[float, float, str]:
+        """执行多维度活体检测。
+
+        Returns:
+            (score, threshold, message)
+            score — [0,1] 综合得分
+            threshold — 本次使用的阈值（有/无 DeepFace 不同）
+            message — 检测结果描述
+        """
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
         # 1. 清晰度（Laplacian 方差）
@@ -189,15 +198,15 @@ class LivenessService:
         # ── 综合评分 ──
         if deepface_score is not None:
             score = (
-                0.05 * blur_score
-                + 0.04 * brightness_score
-                + 0.04 * texture_score
-                + 0.10 * freq_score
-                + 0.14 * lbp_score_val
-                + 0.07 * color_score
-                + 0.56 * deepface_score
+                0.03 * blur_score
+                + 0.03 * brightness_score
+                + 0.03 * texture_score
+                + 0.07 * freq_score
+                + 0.10 * lbp_score_val
+                + 0.04 * color_score
+                + 0.70 * deepface_score
             )
-            threshold = 0.38
+            threshold = 0.55
         else:
             score = (
                 0.20 * blur_score
@@ -207,7 +216,7 @@ class LivenessService:
                 + 0.20 * lbp_score_val
                 + 0.10 * color_score
             )
-            threshold = 0.30
+            threshold = 0.45
 
         score = round(score, 3)
 
@@ -222,9 +231,129 @@ class LivenessService:
             if deepface_score is not None and deepface_score < 0.30:
                 detail.append("疑似照片/屏幕翻拍")
             msg = f"活体检测失败：{'、'.join(detail) or f'综合得分过低（{score}）'}"
-            return score, msg
+            return score, threshold, msg
 
-        return score, "活体检测通过"
+        return score, threshold, "活体检测通过"
+
+    # ------------------------------------------------------------------
+    #  动作验证（配合挑战动作强制执行）
+    # ------------------------------------------------------------------
+
+    def verify_action(self, image: np.ndarray, action: str, face_row: np.ndarray) -> tuple[bool, str]:
+        """验证用户是否完成了指定挑战动作。
+
+        Args:
+            image: BGR 图像。
+            action: 挑战动作代码（smile/turn_left/turn_right/open_mouth）。
+            face_row: YuNet 返回的 15 维人脸行，包含 5 个面部关键点。
+
+        Returns:
+            (passed, failure_message) — passed=True 表示动作验证通过。
+        """
+        if action in ("", "none", "blink"):
+            return True, ""
+
+        x, y, w, h = float(face_row[0]), float(face_row[1]), float(face_row[2]), float(face_row[3])
+        n_x, n_y = float(face_row[8]), float(face_row[9])
+        rc_x, rc_y = float(face_row[10]), float(face_row[11])
+        lc_x, lc_y = float(face_row[12]), float(face_row[13])
+
+        if action in ("turn_head", "turn_left", "turn_right"):
+            # 向左转：鼻尖右移 | 向右转：鼻尖左移
+            turned_left = n_x > x + 0.55 * w
+            turned_right = n_x < x + 0.45 * w
+            if turned_left or turned_right:
+                return True, ""
+            return False, "请左右转头"
+
+        if action == "open_mouth":
+            return self._check_mouth_open(image, face_row)
+
+        if action == "smile":
+            return self._check_smile(image, face_row)
+
+        return False, f"未知动作：{action}"
+
+    def _check_smile(self, image: np.ndarray, face_row: np.ndarray) -> tuple[bool, str]:
+        """使用 Haar smile 级联分类器在嘴部 ROI 检测微笑。"""
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        ih, iw = gray.shape
+
+        n_y = int(face_row[9])
+        rc_x, rc_y = int(face_row[10]), int(face_row[11])
+        lc_x, lc_y = int(face_row[12]), int(face_row[13])
+        face_h = int(face_row[3])
+        face_w = int(face_row[2])
+
+        # 根据关键点划定嘴部 ROI，附加 15% 上下、10% 左右的 padding
+        mouth_top = max(n_y, 0)
+        mouth_bottom = min(max(rc_y, lc_y) + int(face_h * 0.15), ih)
+        mouth_left = max(min(lc_x, rc_x) - int(face_w * 0.10), 0)
+        mouth_right = min(max(lc_x, rc_x) + int(face_w * 0.10), iw)
+
+        if mouth_bottom <= mouth_top or mouth_right <= mouth_left:
+            return False, "无法定位嘴部区域"
+
+        mouth_roi = gray[mouth_top:mouth_bottom, mouth_left:mouth_right]
+        if mouth_roi.size == 0:
+            return False, "嘴部区域为空"
+
+        smiles = self.smile_cascade.detectMultiScale(
+            mouth_roi, scaleFactor=1.5, minNeighbors=8, minSize=(20, 20)
+        )
+        if len(smiles) > 0:
+            return True, ""
+        return False, "请微笑"
+
+    def _check_mouth_open(self, image: np.ndarray, face_row: np.ndarray) -> tuple[bool, str]:
+        """张嘴检测：基于嘴部 ROI 中间 vs 两侧的灰度反差判断。
+        张嘴时口腔内部比嘴唇/皮肤暗很多 → 中间区域显著暗于两侧。
+        相对比较，对光照不敏感。
+        """
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        ih, iw = gray.shape
+
+        rc_y = int(face_row[11])
+        lc_y = int(face_row[13])
+        n_y = int(face_row[9])
+        rc_x, lc_x = int(face_row[10]), int(face_row[12])
+        face_h = int(face_row[3])
+        face_w = int(face_row[2])
+
+        # 划定嘴部 ROI：鼻尖到嘴角下方 15%
+        mouth_top = max(n_y, 0)
+        mouth_bottom = min(max(rc_y, lc_y) + int(face_h * 0.15), ih)
+        mouth_left = max(min(lc_x, rc_x) - int(face_w * 0.10), 0)
+        mouth_right = min(max(lc_x, rc_x) + int(face_w * 0.10), iw)
+
+        if mouth_bottom <= mouth_top or mouth_right <= mouth_left:
+            return False, "无法定位嘴部区域"
+
+        mouth_roi = gray[mouth_top:mouth_bottom, mouth_left:mouth_right]
+        if mouth_roi.size == 0:
+            return False, "嘴部区域为空"
+
+        # 方法 1（主要）：中间 1/3 是否比两侧都暗（张嘴时口腔暗区）
+        h, w = mouth_roi.shape
+        dark_center = False
+        if w >= 6:
+            left = float(np.mean(mouth_roi[:, : w // 3]))
+            center = float(np.mean(mouth_roi[:, w // 3 : 2 * w // 3]))
+            right = float(np.mean(mouth_roi[:, 2 * w // 3 :]))
+            # 中间至少比左和右都暗 12%
+            if center < left * 0.88 and center < right * 0.88:
+                dark_center = True
+
+        if dark_center:
+            return True, ""
+
+        # 方法 2（备用）：水平边缘密度（牙齿产生强水平边缘）
+        edges = cv2.Canny(mouth_roi, 50, 150)
+        h_edge_density = float(np.mean(edges > 0))
+        if h_edge_density > 0.18:
+            return True, ""
+
+        return False, "请张嘴"
 
 
 liveness_service = LivenessService()

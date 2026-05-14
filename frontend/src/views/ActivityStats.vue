@@ -17,22 +17,22 @@
 
     <template v-if="selectedDate">
       <div class="summary section">
-        <div class="summary-stats">
-          <div class="stat-card">
-            <span class="stat-label">应到</span>
-            <span class="stat-value">{{ totalCount }}</span>
+        <div class="compact-grid">
+          <div class="metric" style="padding:14px 20px">
+            <div class="label">应到</div>
+            <div class="value" style="font-size:22px">{{ totalCount }}</div>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">实到</span>
-            <span class="stat-value signed">{{ signedCount }}</span>
+          <div class="metric" style="padding:14px 20px">
+            <div class="label">实到</div>
+            <div class="value" style="font-size:22px;color:#059669">{{ signedCount }}</div>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">缺勤</span>
-            <span class="stat-value absent">{{ absentCount }}</span>
+          <div class="metric" style="padding:14px 20px">
+            <div class="label">缺勤</div>
+            <div class="value" style="font-size:22px;color:#dc2626">{{ absentCount }}</div>
           </div>
-          <div class="stat-card rate">
-            <span class="stat-label">到课率</span>
-            <span class="stat-value">{{ attendanceRate }}%</span>
+          <div class="metric" style="padding:14px 20px;background:#eff6ff;border-color:#bfdbfe">
+            <div class="label">到课率</div>
+            <div class="value" style="font-size:22px;color:#2563eb">{{ attendanceRate }}%</div>
           </div>
         </div>
         <div v-if="absentList.length" class="absent-list">
@@ -162,45 +162,16 @@ onMounted(() => {
   margin-bottom: 16px;
 }
 
-.summary-stats {
+.compact-grid {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
-.stat-card {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 12px 20px;
-  text-align: center;
+.compact-grid .metric {
   min-width: 100px;
-}
-
-.stat-card.rate {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-}
-
-.stat-label {
-  display: block;
-  font-size: 12px;
-  color: #6b7280;
-  margin-bottom: 4px;
-}
-
-.stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #111827;
-}
-
-.stat-value.signed {
-  color: #059669;
-}
-
-.stat-value.absent {
-  color: #dc2626;
+  flex: 1;
 }
 
 .absent-list {
@@ -220,7 +191,4 @@ onMounted(() => {
   color: #991b1b;
   margin-right: 4px;
 }
-
-.student-link { cursor: pointer; }
-.student-link:hover { color: #2563eb; }
 </style>

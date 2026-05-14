@@ -14,7 +14,7 @@ const routes = [
       { path: 'students', component: () => import('../views/Students.vue') },
       { path: 'group-photo', component: () => import('../views/GroupPhoto.vue') },
       { path: 'emotion-stats', component: () => import('../views/EmotionStats.vue') },
-      { path: 'activity-stats', component: () => import('../views/ActivityStats.vue') }
+      { path: 'activity-stats', redirect: '/records' }
     ]
   }
 ]

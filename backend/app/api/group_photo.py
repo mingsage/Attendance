@@ -1,6 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import cv2
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,14 @@ async def recognize_group_photo(
     image = await read_image(file)
     await file.seek(0)
     saved_path = await save_upload(file, get_settings().upload_dir)
+
+    # 保存合照作为考勤照片
+    photo_dir = get_settings().upload_dir / "group_photos"
+    photo_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(ZoneInfo("Asia/Shanghai"))
+    group_photo_path = f"group_photos/{ts.strftime('%Y%m%d%H%M%S')}.jpg"
+    cv2.imwrite(str(get_settings().upload_dir / group_photo_path), image)
+
     faces = face_service.detect_faces(image)
     if not faces:
         raise HTTPException(status_code=400, detail="合照中未检测到人脸")
@@ -58,6 +67,7 @@ async def recognize_group_photo(
                 emotion_type=emotion,
                 course_name=activity_name,
                 message=f"合照识别：{activity_name}",
+                photo_path=group_photo_path,
             )
         )
         db.add(

@@ -14,6 +14,7 @@ class AttendanceOut(BaseModel):
     emotion_type: str | None
     course_name: str
     message: str | None
+    photo_url: str | None = None
     student: StudentOut | None = None
 
     class Config:

@@ -58,11 +58,18 @@
         </transition>
       </div>
 
-      <!-- 提示 -->
+      <!-- 动作进度列表（持久显示直到签到结果） -->
+      <div v-if="livenessEnabled && challengeActions.length" class="action-steps">
+        <div v-for="(a, i) in challengeActions" :key="a.code"
+          :class="['step-row', completedActions.includes(a.code) ? 'step-done' : (i === challengeStep ? 'step-current' : 'step-pending')]">
+          <span class="step-icon">{{ completedActions.includes(a.code) ? '✓' : (i === challengeStep ? '▶' : '○') }}</span>
+          <span class="step-text">{{ a.text }}</span>
+        </div>
+      </div>
       <el-alert
-        v-if="livenessEnabled && challenge.text"
-        :title="challenge.text"
-        type="warning"
+        v-else-if="livenessEnabled"
+        title="获取挑战动作…"
+        type="info"
         :closable="false"
         show-icon
       />
@@ -129,9 +136,8 @@
               </span>
             </el-descriptions-item>
             <el-descriptions-item label="情绪">
-              <span v-if="result.record.emotion_type && result.record.emotion_type !== 'neutral'">
-                {{ emotionIcon(result.record.emotion_type) }}
-                {{ result.record.emotion_type }}
+              <span v-if="result.record.emotion_type && result.record.emotion_type !== 'neutral'" style="white-space: nowrap">
+                {{ formatEmotion(result.record.emotion_type) }}
               </span>
               <span v-else>-</span>
             </el-descriptions-item>
@@ -154,7 +160,7 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Refresh, Timer, VideoCamera } from '@element-plus/icons-vue'
 import { attendanceApi } from '../api/modules'
@@ -176,23 +182,28 @@ const captureStatus = ref('')
 const statusType = ref('info')
 const cooldownCount = ref(0)
 let continuousTimer = null
-const challenge = reactive({ action: '', text: '' })
+const challengeActions = ref([])
+const challengeStep = ref(0)
+const completedActions = ref([])
+const currentChallengeAction = computed(() => challengeActions.value[challengeStep.value] || null)
+const currentActionCode = computed(() => currentChallengeAction.value?.code || '')
+const currentChallengeText = computed(() => currentChallengeAction.value?.text || '')
 
 let cameraStream = null
 let detectInterval = null
 
-const EMOTION_ICONS = {
-  happy: '😊',
-  sad: '😢',
-  angry: '😠',
-  surprised: '😮',
-  fearful: '😨',
-  disgusted: '🤢',
-  neutral: '😐',
+const EMOTION_MAP = {
+  happy: '😊 Happy',
+  sad: '😢 Sad',
+  angry: '😠 Angry',
+  surprised: '😮 Surprised',
+  fearful: '😨 Fearful',
+  disgusted: '🤢 Disgusted',
+  neutral: '😐 Neutral',
 }
 
-function emotionIcon(type) {
-  return EMOTION_ICONS[type] || ''
+function formatEmotion(type) {
+  return EMOTION_MAP[type] || type
 }
 
 function formatTime(ts) {
@@ -270,7 +281,7 @@ async function submit(file) {
   statusStep.value = 2
   result.value = null
   try {
-    const { data } = await attendanceApi.checkIn(file, courseName.value)
+    const { data } = await attendanceApi.checkIn(file, courseName.value, currentActionCode.value)
     result.value = data
     statusStep.value = 4
     if (data.success) {
@@ -304,7 +315,9 @@ function captureAndSubmit() {
 
 async function loadChallenge() {
   const { data } = await attendanceApi.challenge()
-  Object.assign(challenge, data)
+  challengeActions.value = data.actions || []
+  challengeStep.value = 0
+  completedActions.value = []
   livenessEnabled.value = Boolean(data.enabled)
   statusStep.value = Math.max(statusStep.value, 1)
 }
@@ -359,9 +372,12 @@ async function toggleContinuousCapture() {
 }
 
 function startContinuousLoop() {
+  let processing = false
+
   continuousTimer = setInterval(() => {
     if (!continuousMode.value) return
     if (cooldownCount.value > 0) return
+    if (processing) return
 
     if (!faceDetected.value) {
       captureStatus.value = '等待人脸…'
@@ -372,8 +388,7 @@ function startContinuousLoop() {
     const video = videoRef.value
     if (!video?.videoWidth) return
 
-    captureStatus.value = '检测中…'
-    statusType.value = 'warning'
+    processing = true
     statusStep.value = 2
 
     const canvas = document.createElement('canvas')
@@ -382,16 +397,49 @@ function startContinuousLoop() {
     canvas.getContext('2d').drawImage(video, 0, 0)
 
     canvas.toBlob(async (blob) => {
-      if (!blob || !continuousMode.value) return
-
-      captureStatus.value = '识别中…'
-      statusType.value = 'info'
-      statusStep.value = 3
-
       try {
+        if (!blob || !continuousMode.value) return
+
+        // Phase 1: multi-step action verification
+        if (livenessEnabled.value && challengeActions.value.length > 0) {
+          const step = challengeStep.value
+          // 所有动作已完成 → 进入签到
+          if (step >= challengeActions.value.length) {
+            captureStatus.value = '所有动作完成，正在签到…'
+            statusType.value = 'success'
+          } else {
+            const action = challengeActions.value[step]
+            captureStatus.value = action.text
+            statusType.value = 'warning'
+
+            try {
+              const verifyRes = await attendanceApi.verifyAction(blob, action.code)
+              if (!verifyRes.data.passed) {
+                const msg = verifyRes.data.message
+                if (msg && msg !== captureStatus.value) {
+                  captureStatus.value = msg
+                }
+                return
+              }
+              // 动作通过 — 保留当前提示直到下次循环更新
+              completedActions.value.push(action.code)
+              challengeStep.value++
+              return
+            } catch {
+              return
+            }
+          }
+        }
+
+        // Phase 2: full check-in
+        captureStatus.value = '识别中…'
+        statusType.value = 'info'
+        statusStep.value = 3
+
         const { data } = await attendanceApi.checkIn(
           new File([blob], 'check-in.jpg', { type: 'image/jpeg' }),
-          courseName.value
+          courseName.value,
+          currentActionCode.value
         )
         result.value = data
         statusStep.value = 4
@@ -403,14 +451,18 @@ function startContinuousLoop() {
           captureStatus.value = data.message?.length > 30 ? '签到失败' : data.message
           statusType.value = 'error'
         }
+
+        // 刷新挑战动作，下一轮需重新完成
+        try { loadChallenge() } catch {}
+        await startCooldown()
       } catch {
         captureStatus.value = '请求失败'
         statusType.value = 'error'
+      } finally {
+        processing = false
       }
-
-      await startCooldown()
     }, 'image/jpeg', 0.95)
-  }, 800)
+  }, 300)
 }
 
 function startCooldown() {
@@ -673,5 +725,48 @@ onBeforeUnmount(() => {
 }
 .status-fade-leave-to {
   opacity: 0;
+}
+
+/* 动作步骤进度 */
+.action-steps {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.step-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+.step-icon {
+  width: 22px;
+  text-align: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.step-text {
+  flex: 1;
+}
+.step-pending {
+  color: #94a3b8;
+}
+.step-current {
+  color: #1e293b;
+  font-weight: 600;
+}
+.step-current .step-icon {
+  color: #f59e0b;
+}
+.step-done {
+  color: #10b981;
+}
+.step-done .step-icon {
+  font-weight: 700;
 }
 </style>

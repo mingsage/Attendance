@@ -34,7 +34,7 @@ def create_app() -> FastAPI:
 
 
 def ensure_schema() -> None:
-    """轻量迁移：旧 SQLite 数据库没有 gender 列时自动补上。"""
+    """轻量迁移：SQLite 数据库缺失列时自动补上。"""
 
     if engine.dialect.name != "sqlite":
         return
@@ -44,6 +44,10 @@ def ensure_schema() -> None:
             conn.exec_driver_sql("ALTER TABLE students ADD COLUMN gender VARCHAR(16)")
         if "face_sample_count" not in columns:
             conn.exec_driver_sql("ALTER TABLE students ADD COLUMN face_sample_count INTEGER DEFAULT 0")
+
+        ar_columns = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(attendance_records)").fetchall()]
+        if "photo_path" not in ar_columns:
+            conn.exec_driver_sql("ALTER TABLE attendance_records ADD COLUMN photo_path VARCHAR(512)")
 
 
 app = create_app()

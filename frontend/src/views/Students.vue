@@ -14,7 +14,7 @@
 
     <el-table
       ref="tableRef"
-      :data="paginatedRows"
+      :data="rows"
       class="section"
       @row-click="openDetail"
       @selection-change="handleSelectionChange"
@@ -44,16 +44,6 @@
         </template>
       </el-table-column>
     </el-table>
-
-    <div v-if="rows.length > pageSize" class="pagination-wrapper">
-      <el-pagination
-        v-model:current-page="currentPage"
-        :page-size="pageSize"
-        :total="rows.length"
-        layout="prev, pager, next"
-        small
-      />
-    </div>
 
     <!-- 新增/编辑学生弹窗 -->
     <el-dialog v-model="visible" :title="form.id ? '编辑学生' : '新增学生'" width="420px" destroy-on-close>
@@ -182,8 +172,6 @@ const visible = ref(false)
 const batchInputRef = ref()
 const faceUploadInput = ref()
 const tableRef = ref()
-const currentPage = ref(1)
-const pageSize = ref(20)
 const form = reactive({ id: null, student_no: '', name: '', class_name: '', gender: '' })
 const batchResultVisible = ref(false)
 const batchResult = reactive({ imported_count: 0, failed_count: 0, imported: [], failed: [] })
@@ -208,7 +196,6 @@ const paginatedRows = computed(() => {
 const selectedIds = computed(() => selectedRows.value.map((row) => row.id))
 
 async function load() {
-  currentPage.value = 1
   const { data } = await studentApi.list(keyword.value)
   rows.value = data
 }
@@ -224,10 +211,20 @@ function openEdit(row) {
 }
 
 async function save() {
-  if (form.id) await studentApi.update(form.id, form)
-  else await studentApi.create(form)
+  let studentId = form.id
+  if (form.id) {
+    await studentApi.update(form.id, form)
+  } else {
+    const { data } = await studentApi.create(form)
+    studentId = data.id
+  }
   visible.value = false
   await load()
+  // 新增学生后立即打开人脸录入
+  if (!form.id && studentId) {
+    const student = rows.value.find((r) => r.id === studentId)
+    if (student) openFaceDialog(student)
+  }
 }
 
 async function remove(row) {
@@ -369,12 +366,6 @@ onMounted(load)
 </script>
 
 <style scoped>
-.pagination-wrapper {
-  display: flex;
-  justify-content: center;
-  margin-top: 16px;
-}
-
 .detail-wrap {
   display: flex;
   gap: 24px;

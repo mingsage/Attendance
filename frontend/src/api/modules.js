@@ -29,12 +29,23 @@ export const attendanceApi = {
   challenge: () => http.get('/attendance/liveness-challenge'),
   livenessSettings: () => http.get('/attendance/liveness-settings'),
   updateLivenessSettings: (enabled) => http.put('/attendance/liveness-settings', null, { params: { enabled } }),
-  checkIn: (file, courseName) => {
+  checkIn: (file, courseName, challengeAction = '') => {
     const form = new FormData()
     form.append('file', file)
-    return http.post('/attendance/check-in', form, { params: { course_name: courseName } })
+    const params = { course_name: courseName }
+    if (challengeAction) {
+      params.challenge_action = challengeAction
+    }
+    return http.post('/attendance/check-in', form, { params })
+  },
+  verifyAction: (blob, challengeAction) => {
+    const form = new FormData()
+    form.append('file', blob)
+    return http.post('/attendance/verify-action', form, { params: { challenge_action: challengeAction } })
   },
   records: (params) => http.get('/attendance/records', { params }),
+  deleteRecord: (id) => http.delete(`/attendance/records/${id}`),
+  batchDeleteRecords: (recordIds) => http.post('/attendance/records/batch-delete', { record_ids: recordIds }),
   export: (params) => http.get('/attendance/export', { params, responseType: 'blob' })
 }
 

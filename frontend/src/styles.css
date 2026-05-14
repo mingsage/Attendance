@@ -40,29 +40,24 @@ body {
 
 /* 页面容器 */
 .page {
-  padding: 24px;
+  padding: 20px;
+  max-width: 1440px;
 }
 
 /* 顶部工具栏 */
 .toolbar {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .toolbar h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
-}
-
-.toolbar-right {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
+  white-space: nowrap;
 }
 
 /* 通用卡片 */
@@ -70,7 +65,7 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px;
+  padding: 16px;
   box-shadow: var(--shadow);
   transition: var(--transition);
 }
@@ -85,7 +80,7 @@ body {
 /* 指标卡片 */
 .metric {
   background: var(--bg-card);
-  padding: 20px;
+  padding: 16px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
@@ -96,31 +91,31 @@ body {
 
 .metric:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
+  transform: translateY(-1px);
 }
 
 .metric .icon-wrapper {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 12px;
-  font-size: 20px;
+  margin-bottom: 8px;
+  font-size: 18px;
 }
 
 .metric .label {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
 
 .metric .value {
-  margin-top: 6px;
-  font-size: 28px;
+  margin-top: 4px;
+  font-size: 26px;
   font-weight: 700;
   line-height: 1.2;
 }
@@ -128,7 +123,7 @@ body {
 /* 图表容器 */
 .chart {
   width: 100%;
-  height: 360px;
+  min-height: 320px;
 }
 
 /* 状态标签 */
@@ -183,6 +178,11 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -203,7 +203,7 @@ body {
   opacity: 0;
 }
 
-/* Element Plus 覆盖 */
+/* Element Plus 全局覆盖 — 紧凑统一视觉 */
 .el-table {
   border-radius: var(--radius-sm) !important;
 }
@@ -212,6 +212,32 @@ body {
   background: #f8fafc !important;
   color: var(--text-secondary) !important;
   font-weight: 600 !important;
+  font-size: 12px !important;
+  padding: 6px 8px !important;
+}
+
+.el-table .el-table__cell {
+  padding: 5px 8px !important;
+}
+
+.el-table__row td {
+  font-size: 13px;
+}
+
+.el-table .el-table__row:hover td {
+  background: #f0f7ff !important;
+}
+
+.el-table--striped .el-table__body tr.el-table__row--striped td {
+  background: #fafbfc;
+}
+
+.el-table--border .el-table__cell {
+  border-color: #e5e7eb;
+}
+
+.el-table__body-wrapper {
+  overflow-x: auto;
 }
 
 .el-dialog {
@@ -220,8 +246,61 @@ body {
 
 .el-button {
   border-radius: var(--radius-sm) !important;
+  transition: var(--transition);
 }
 
-.el-input__wrapper {
+.el-input__wrapper,
+.el-select__wrapper {
   border-radius: var(--radius-sm) !important;
+}
+
+.el-card {
+  border-radius: var(--radius) !important;
+  border: 1px solid var(--border) !important;
+}
+
+.el-tag {
+  border-radius: 4px !important;
+}
+
+.el-progress {
+  margin: 0 !important;
+}
+
+/* 可点击学生链接的通用样式 */
+.student-link {
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.student-link:hover {
+  color: var(--primary);
+}
+
+/* 空状态容器 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: #9ca3af;
+}
+
+/* 签到照片预览弹窗 */
+.photo-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.photo-info {
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 2;
+}
+
+.photo-info p {
+  margin: 0;
 }

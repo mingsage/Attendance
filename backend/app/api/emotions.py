@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.models.attendance import AttendanceRecord
 from app.models.emotion import EmotionRecord
 from app.models.student import Student
 from app.models.user import User
@@ -40,6 +41,25 @@ def emotion_records(
             "emotion_type": row.emotion_type,
             "confidence": row.confidence,
             "source": row.source,
+            "photo_url": _lookup_photo_url(db, row),
         }
         for row in rows
     ]
+
+
+def _lookup_photo_url(db: Session, emotion_record: EmotionRecord) -> str | None:
+    """查找关联的考勤签到照片。"""
+    if emotion_record.source != "attendance" or not emotion_record.student_id:
+        return None
+    att = (
+        db.query(AttendanceRecord)
+        .filter(
+            AttendanceRecord.student_id == emotion_record.student_id,
+            AttendanceRecord.timestamp == emotion_record.timestamp,
+            AttendanceRecord.photo_path.isnot(None),
+        )
+        .first()
+    )
+    if att and att.photo_path:
+        return f"/uploads/{att.photo_path}"
+    return None

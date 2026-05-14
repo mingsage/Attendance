@@ -70,7 +70,11 @@
               />
             </template>
           </el-table-column>
-          <el-table-column prop="emotion" label="情绪" width="100" />
+          <el-table-column label="情绪" width="130">
+            <template #default="{ row }">
+              <span style="white-space: nowrap">{{ EMOTION_MAP[row.emotion] || row.emotion }}</span>
+            </template>
+          </el-table-column>
         </el-table>
       </transition>
     </div>
@@ -83,6 +87,16 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { groupPhotoApi } from '../api/modules'
 import StudentDetail from '../components/StudentDetail.vue'
+
+const EMOTION_MAP = {
+  happy: '😊 Happy',
+  sad: '😢 Sad',
+  angry: '😠 Angry',
+  surprised: '😮 Surprised',
+  fearful: '😨 Fearful',
+  disgusted: '🤢 Disgusted',
+  neutral: '😐 Neutral',
+}
 
 const detailVisible = ref(false)
 const detailStudentId = ref(null)
@@ -247,6 +261,4 @@ async function startRecognize() {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.student-link { cursor: pointer; }
-.student-link:hover { color: #2563eb; }
 </style>

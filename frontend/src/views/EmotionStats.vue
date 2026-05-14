@@ -6,26 +6,37 @@
     </div>
     <div class="section">
       <div ref="chartRef" class="chart" />
-      <el-table :data="records" style="margin-top: 16px">
+      <el-table :data="records" style="margin-top: 16px" @row-click="showPhoto">
         <el-table-column prop="timestamp" label="时间" width="180">
           <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
         </el-table-column>
-        <el-table-column prop="student_no" label="学号">
+        <el-table-column prop="student_no" label="学号" />
+        <el-table-column prop="name" label="姓名" />
+        <el-table-column label="情绪" width="130">
           <template #default="{ row }">
-            <span class="student-link" @click="showDetail(row)">{{ row.student_no }}</span>
+            <span style="white-space: nowrap">{{ EMOTION_MAP[row.emotion_type] || row.emotion_type }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="姓名">
-          <template #default="{ row }">
-            <span class="student-link" @click="showDetail(row)">{{ row.name }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="emotion_type" label="情绪" />
         <el-table-column prop="confidence" label="置信度" />
         <el-table-column prop="source" label="来源" />
       </el-table>
     </div>
     <StudentDetail v-model:visible="detailVisible" :student-id="detailStudentId" />
+
+    <!-- 签到照片弹窗 -->
+    <el-dialog v-model="photoVisible" title="签到照片" width="420px" destroy-on-close>
+      <div v-if="photoUrl" class="photo-preview">
+        <img :src="photoUrl" style="width: 100%; border-radius: 8px; display: block" />
+        <div class="photo-info">
+          <p><strong>时间：</strong>{{ formatTime(photoRecord?.timestamp) }}</p>
+          <p><strong>情绪：</strong>{{ EMOTION_MAP[photoRecord?.emotion_type] || photoRecord?.emotion_type }}</p>
+          <p v-if="photoRecord?.source"><strong>来源：</strong>{{ photoRecord.source }}</p>
+        </div>
+      </div>
+      <div v-else style="text-align: center; color: #999; padding: 40px">
+        暂无签到照片
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -38,12 +49,31 @@ import StudentDetail from '../components/StudentDetail.vue'
 
 const detailVisible = ref(false)
 const detailStudentId = ref(null)
+const photoVisible = ref(false)
+const photoUrl = ref('')
+const photoRecord = ref(null)
 
 function showDetail(row) {
   if (row.student_id) {
     detailStudentId.value = row.student_id
     detailVisible.value = true
   }
+}
+
+function showPhoto(row) {
+  photoUrl.value = row.photo_url || ''
+  photoRecord.value = row
+  photoVisible.value = true
+}
+
+const EMOTION_MAP = {
+  happy: '😊 Happy',
+  sad: '😢 Sad',
+  angry: '😠 Angry',
+  surprised: '😮 Surprised',
+  fearful: '😨 Fearful',
+  disgusted: '🤢 Disgusted',
+  neutral: '😐 Neutral',
 }
 
 const EMOTION_COLORS = {
@@ -114,6 +144,4 @@ onMounted(load)
 </script>
 
 <style scoped>
-.student-link { cursor: pointer; }
-.student-link:hover { color: #2563eb; }
 </style>

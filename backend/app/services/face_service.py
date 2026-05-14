@@ -110,6 +110,14 @@ class FaceService:
             return []
         return [face.astype(np.float32) for face in faces]
 
+    def detect_sface_rows(self, image: np.ndarray) -> list[np.ndarray]:
+        """检测人脸并返回完整的 YuNet 15 维行（含 5 个面部关键点）。
+
+        每行格式：[x, y, w, h, re_x, re_y, le_x, le_y, n_x, n_y, rc_x, rc_y, lc_x, lc_y, roll]
+        供活体检测动作验证使用。若 SFace 模型不可用或无检测结果，返回空列表。
+        """
+        return self._detect_sface_rows(image)
+
     def detect_faces(self, image: np.ndarray, allow_fallback: bool = False) -> list[tuple[int, int, int, int]]:
         sface_rows = self._detect_sface_rows(image)
         if sface_rows:

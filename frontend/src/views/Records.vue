@@ -2,17 +2,67 @@
   <div class="page">
     <div class="toolbar">
       <h2>考勤记录</h2>
-      <div>
-        <el-input v-model="filters.keyword" placeholder="姓名/学号" style="width: 180px; margin-right: 8px" clearable @clear="load" />
-        <el-select v-model="filters.status" placeholder="状态" style="width: 130px; margin-right: 8px" clearable @change="load">
+      <div class="toolbar-group">
+        <el-select v-model="courseName" placeholder="选择课程" clearable style="width: 160px" @clear="onCourseClear" @change="onCourseChange">
+          <el-option v-for="name in courseList" :key="name" :label="name" :value="name" />
+        </el-select>
+        <el-select v-model="selectedDate" placeholder="选择日期" clearable :disabled="!courseName" style="width: 140px" @clear="load" @change="load">
+          <el-option v-for="d in dateList" :key="d" :label="d" :value="d" />
+        </el-select>
+        <el-input v-model="keyword" placeholder="姓名/学号" style="width: 150px" clearable @clear="load" />
+        <el-select v-model="status" placeholder="状态" style="width: 110px" clearable @change="load">
           <el-option label="成功" value="success" />
           <el-option label="失败" value="failed" />
         </el-select>
         <el-button :icon="Search" @click="load">查询</el-button>
-        <el-button type="primary" :icon="Download" @click="download">导出</el-button>
+        <el-button type="danger" :icon="Delete" :disabled="!selectedRows.length" @click="batchDeleteRecords">
+          批量删除 ({{ selectedRows.length }})
+        </el-button>
+        <el-dropdown trigger="click" @command="handleExport">
+          <el-button type="primary" :icon="Download">
+            导出
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="records">导出考勤明细</el-dropdown-item>
+              <el-dropdown-item command="stats" :disabled="!courseName">导出统计报表</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
-    <el-table :data="paginatedRows" class="section" stripe border @sort-change="onSort" @row-click="showDetailFromRow" style="cursor: pointer">
+
+    <!-- 统计概览 -->
+    <div v-if="showStats" class="summary section" style="margin-bottom: 12px; animation: fadeIn 0.3s ease">
+      <div class="compact-grid">
+        <div class="metric" style="padding:14px 20px">
+          <div class="label">应到</div>
+          <div class="value" style="font-size:22px">{{ totalCount }}</div>
+        </div>
+        <div class="metric" style="padding:14px 20px">
+          <div class="label">实到</div>
+          <div class="value" style="font-size:22px;color:#059669">{{ signedCount }}</div>
+        </div>
+        <div class="metric" style="padding:14px 20px">
+          <div class="label">缺勤</div>
+          <div class="value" style="font-size:22px;color:#dc2626">{{ absentCount }}</div>
+        </div>
+        <div class="metric" style="padding:14px 20px;background:#eff6ff;border-color:#bfdbfe">
+          <div class="label">到课率</div>
+          <div class="value" style="font-size:22px;color:#2563eb">{{ attendanceRate }}%</div>
+        </div>
+      </div>
+      <div v-if="absentList.length" class="absent-list">
+        <span class="absent-label">未签到学生：</span>
+        <el-tag v-for="s in absentList" :key="s.student_no" type="danger" size="small" effect="plain" style="margin: 2px 4px 2px 0">
+          {{ s.name }}（{{ s.student_no }}）
+        </el-tag>
+      </div>
+    </div>
+
+    <!-- 考勤明细表 -->
+    <el-table ref="tableRef" :data="rows" class="section" stripe border @sort-change="onSort" @row-click="showDetailFromRow" @selection-change="onSelectionChange" style="cursor: pointer">
+      <el-table-column type="selection" width="40" />
       <el-table-column prop="timestamp" label="时间" width="170" sortable="custom">
         <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
       </el-table-column>
@@ -26,9 +76,9 @@
           <span v-else style="color: #9ca3af">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="90">
+      <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <span :class="['status-tag', row.status]">
+          <span :class="['status-tag', row.status]" style="white-space: nowrap">
             {{ row.status === 'success' ? '成功' : '失败' }}
           </span>
         </template>
@@ -49,53 +99,87 @@
           <span v-else style="color: #9ca3af">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="情绪" width="130">
+      <el-table-column label="情绪" width="140">
         <template #default="{ row }">
-          <span v-if="row.emotion_type" class="emotion-cell">
-            <span class="emotion-icon">{{ EMOTION_ICONS[row.emotion_type] || '' }}</span>
-            {{ row.emotion_type }}
-          </span>
+          <span v-if="row.emotion_type" style="white-space: nowrap">{{ EMOTION_MAP[row.emotion_type] || row.emotion_type }}</span>
           <span v-else style="color: #9ca3af">-</span>
         </template>
       </el-table-column>
-      <el-table-column prop="message" label="备注" min-width="140" show-overflow-tooltip />
+      <el-table-column label="操作" width="70" fixed="right">
+        <template #default="{ row }">
+          <el-button type="danger" size="small" :icon="Delete" circle @click.stop="deleteRecord(row)" />
+        </template>
+      </el-table-column>
     </el-table>
 
-    <div v-if="rows.length > 20" class="pagination-wrapper">
-      <el-pagination
-        v-model:current-page="currentPage"
-        :page-size="pageSize"
-        :total="rows.length"
-        layout="prev, pager, next"
-        small
-      />
-    </div>
-    <StudentDetail v-model:visible="detailVisible" :student-id="detailStudentId" />
+    <!-- 签到照片弹窗 -->
+    <el-dialog v-model="photoVisible" title="签到照片" width="420px" destroy-on-close>
+      <div v-if="photoUrl" class="photo-preview">
+        <img :src="photoUrl" style="width: 100%; border-radius: 8px; display: block" />
+        <div class="photo-info">
+          <p><strong>时间：</strong>{{ formatTime(photoRecord?.timestamp) }}</p>
+          <p><strong>状态：</strong>
+            <span :class="['status-tag', photoRecord?.status]">
+              {{ photoRecord?.status === 'success' ? '成功' : '失败' }}
+            </span>
+          </p>
+          <p v-if="photoRecord?.course_name"><strong>课程：</strong>{{ photoRecord.course_name }}</p>
+          <p v-if="photoRecord?.message"><strong>备注：</strong>{{ photoRecord.message }}</p>
+        </div>
+      </div>
+      <div v-else style="text-align: center; color: #999; padding: 40px">
+        暂无签到照片
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Download, Search } from '@element-plus/icons-vue'
-import { attendanceApi } from '../api/modules'
-import StudentDetail from '../components/StudentDetail.vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, Download, Search } from '@element-plus/icons-vue'
+import { attendanceApi, statisticsApi } from '../api/modules'
 
-const EMOTION_ICONS = {
-  happy: '😊',
-  sad: '😢',
-  angry: '😠',
-  surprised: '😮',
-  fearful: '😨',
-  disgusted: '🤢',
-  neutral: '😐',
+const EMOTION_MAP = {
+  happy: '😊 Happy',
+  sad: '😢 Sad',
+  angry: '😠 Angry',
+  surprised: '😮 Surprised',
+  fearful: '😨 Fearful',
+  disgusted: '🤢 Disgusted',
+  neutral: '😐 Neutral',
 }
 
 const rows = ref([])
-const filters = reactive({ keyword: '', status: '' })
-const currentPage = ref(1)
-const pageSize = ref(20)
-const detailVisible = ref(false)
-const detailStudentId = ref(null)
+const keyword = ref('')
+const status = ref('')
+const photoVisible = ref(false)
+const photoUrl = ref('')
+const photoRecord = ref(null)
+const selectedRows = ref([])
+const tableRef = ref(null)
+
+// 统计相关
+const courseName = ref('')
+const selectedDate = ref('')
+const courseList = ref([])
+const dateList = ref([])
+const statsRows = ref([])
+
+const showStats = computed(() => courseName.value && selectedDate.value)
+const signedList = computed(() => statsRows.value.filter((r) => r.count))
+const absentList = computed(() => statsRows.value.filter((r) => !r.count))
+const totalCount = computed(() => statsRows.value.length)
+const signedCount = computed(() => signedList.value.length)
+const absentCount = computed(() => absentList.value.length)
+const attendanceRate = computed(() => {
+  if (!statsRows.value.length) return 0
+  return ((signedCount.value / statsRows.value.length) * 100).toFixed(1)
+})
+
+function onSelectionChange(selection) {
+  selectedRows.value = selection
+}
 
 function formatTime(ts) {
   if (!ts) return '-'
@@ -103,11 +187,6 @@ function formatTime(ts) {
   const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
-
-const paginatedRows = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return rows.value.slice(start, start + pageSize.value)
-})
 
 function onSort({ prop, order }) {
   if (!prop || !order) return
@@ -119,27 +198,69 @@ function onSort({ prop, order }) {
 }
 
 async function load() {
-  currentPage.value = 1
-  const { data } = await attendanceApi.records(filters)
+  const params = { keyword: keyword.value, status: status.value, limit: 500 }
+  if (courseName.value) params.course_name = courseName.value
+  const { data } = await attendanceApi.records(params)
   rows.value = data
-}
 
-function showDetail(student) {
-  if (student?.id) {
-    detailStudentId.value = student.id
-    detailVisible.value = true
+  if (courseName.value && selectedDate.value) {
+    const { data: stats } = await statisticsApi.attendanceStats(courseName.value, selectedDate.value)
+    statsRows.value = stats
+  } else {
+    statsRows.value = []
   }
 }
 
 function showDetailFromRow(row) {
-  if (row.student?.id) {
-    detailStudentId.value = row.student.id
-    detailVisible.value = true
-  }
+  photoUrl.value = row.photo_url || ''
+  photoRecord.value = row
+  photoVisible.value = true
 }
 
-async function download() {
-  const { data } = await attendanceApi.export(filters)
+async function deleteRecord(row) {
+  try {
+    await ElMessageBox.confirm(`确定删除 ${row.student?.name || '该'} 考勤记录吗？` + (
+      row.photo_url ? '\n\n签到照片也会一并删除。' : ''
+    ), '确认删除', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  await attendanceApi.deleteRecord(row.id)
+  ElMessage.success('已删除')
+  await load()
+}
+
+async function batchDeleteRecords() {
+  const ids = selectedRows.value.map((r) => r.id)
+  if (!ids.length) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${ids.length} 条考勤记录吗？\n\n关联的签到照片也会一并删除。`,
+      '批量删除',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  await attendanceApi.batchDeleteRecords(ids)
+  ElMessage.success(`已删除 ${ids.length} 条记录`)
+  selectedRows.value = []
+  await load()
+}
+
+async function handleExport(command) {
+  if (command === 'records') await exportRecords()
+  else if (command === 'stats') await exportStats()
+}
+
+async function exportRecords() {
+  const params = { keyword: keyword.value, status: status.value }
+  if (courseName.value) params.course_name = courseName.value
+  const { data } = await attendanceApi.export(params)
   const url = URL.createObjectURL(data)
   const a = document.createElement('a')
   a.href = url
@@ -148,63 +269,85 @@ async function download() {
   URL.revokeObjectURL(url)
 }
 
-onMounted(load)
+async function exportStats() {
+  if (!courseName.value) return
+  const { data } = await statisticsApi.attendanceExport(courseName.value)
+  const url = URL.createObjectURL(data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${courseName.value}-考勤统计.xlsx`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function loadCourses() {
+  const { data } = await statisticsApi.courseList()
+  courseList.value = data
+}
+
+async function onCourseChange(name) {
+  selectedDate.value = ''
+  if (name) {
+    const { data } = await statisticsApi.courseDates(name)
+    dateList.value = data
+  } else {
+    dateList.value = []
+  }
+  load()
+}
+
+function onCourseClear() {
+  selectedDate.value = ''
+  dateList.value = []
+  load()
+}
+
+onMounted(() => {
+  loadCourses()
+  load()
+})
 </script>
 
 <style scoped>
-.pagination-wrapper {
+.toolbar-group {
   display: flex;
-  justify-content: center;
-  margin-top: 16px;
-}
-
-.student-link {
-  cursor: pointer;
-}
-
-.student-link:hover span:first-child {
-  color: var(--primary, #2563eb);
-}
-
-/* 情绪列 */
-.emotion-cell {
-  display: inline-flex;
+  gap: 8px;
   align-items: center;
-  gap: 6px;
-  white-space: nowrap;
+  flex-wrap: wrap;
 }
 
-.emotion-icon {
-  font-size: 18px;
-  line-height: 1;
+.summary {
+  margin-bottom: 16px;
 }
 
-/* 表格覆盖 */
-:deep(.el-table) {
-  border-radius: 10px !important;
-  overflow: hidden;
+.compact-grid {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
-:deep(.el-table th.el-table__cell) {
-  background: #f8fafc !important;
-  color: #6b7280 !important;
-  font-weight: 600 !important;
-  font-size: 13px !important;
+.compact-grid .metric {
+  min-width: 100px;
+  flex: 1;
 }
 
-:deep(.el-table .el-table__row:hover) {
-  background: #f0f7ff !important;
+.absent-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
 }
 
-:deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
-  background: #fafbfc;
+.absent-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #991b1b;
+  margin-right: 4px;
 }
 
-:deep(.el-table--border) {
-  border-color: #e5e7eb;
-}
-
-:deep(.el-table__body td) {
-  padding: 6px 0 !important;
-}
 </style>

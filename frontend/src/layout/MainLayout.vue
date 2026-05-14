@@ -39,10 +39,7 @@
           <el-icon><TrendCharts /></el-icon>
           <span>情绪统计</span>
         </el-menu-item>
-        <el-menu-item index="/activity-stats">
-          <el-icon><Histogram /></el-icon>
-          <span>考勤统计</span>
-        </el-menu-item>
+        <!-- 考勤统计已合并到考勤记录 -->
       </el-menu>
     </el-aside>
     <el-container>
@@ -84,7 +81,6 @@ const routeTitles = {
   '/students': '学生管理',
   '/group-photo': '合照识别',
   '/emotion-stats': '情绪统计',
-  '/activity-stats': '考勤统计',
 }
 
 const auth = useAuthStore()

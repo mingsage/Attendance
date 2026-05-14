@@ -110,22 +110,24 @@ def attendance_export(course_name: str = "", db: Session = Depends(get_db), _: U
 
     # 获取每个学生在每个日期的签到情况
     all_students = db.query(Student.id, Student.name, Student.class_name).order_by(Student.id).all()
-    # 批量查每个日期签到的学生
-    checkin_map = {}  # {student_id: set of dates}
-    for d in dates:
-        ids = {
-            row[0] for row in
-            db.query(AttendanceRecord.student_id)
-            .filter(
-                AttendanceRecord.status == "success",
-                AttendanceRecord.course_name.contains(course_name),
-                func.strftime("%Y-%m-%d", AttendanceRecord.timestamp) == d,
-            )
-            .distinct()
-            .all()
-        }
-        for sid in ids:
-            checkin_map.setdefault(sid, set()).add(d)
+
+    # 一次查询所有签到记录（替代原来的 N+1 循环）
+    checkin_rows = (
+        db.query(
+            AttendanceRecord.student_id,
+            func.strftime("%Y-%m-%d", AttendanceRecord.timestamp).label("d"),
+        )
+        .filter(
+            AttendanceRecord.status == "success",
+            AttendanceRecord.course_name.contains(course_name),
+            func.strftime("%Y-%m-%d", AttendanceRecord.timestamp).in_(dates),
+        )
+        .distinct()
+        .all()
+    )
+    checkin_map: dict[int, set[str]] = {}
+    for sid, d in checkin_rows:
+        checkin_map.setdefault(sid, set()).add(d)
 
     students = []
     for sid, name, klass in all_students:

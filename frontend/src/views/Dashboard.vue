@@ -35,19 +35,19 @@
       </div>
     </div>
 
-    <div class="section" style="margin-top: 20px">
-      <h3 style="margin:0 0 14px;font-size:16px;font-weight:600">最近考勤记录</h3>
-      <el-table :data="recentRecords" v-if="recentRecords.length" size="small" max-height="320">
+    <div class="section" style="margin-top: 16px">
+      <h3 style="margin:0 0 12px;font-size:15px;font-weight:600">最近考勤记录</h3>
+      <el-table :data="recentRecords" v-if="recentRecords.length" size="small" max-height="320" @row-click="showPhoto">
         <el-table-column prop="timestamp" label="时间" width="170" />
         <el-table-column label="学生">
           <template #default="{ row }">
-            <span v-if="row.student" class="student-link" @click="showDetail(row.student)">{{ row.student.name }}</span>
+            <span v-if="row.student" class="student-link">{{ row.student.name }}</span>
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <span :class="['status-tag', row.status]">
+            <span :class="['status-tag', row.status]" style="white-space: nowrap">
               {{ row.status === 'success' ? '成功' : '失败' }}
             </span>
           </template>
@@ -57,7 +57,26 @@
       </el-table>
       <el-empty v-else description="暂无考勤记录" :image-size="80" />
     </div>
-    <StudentDetail v-model:visible="detailVisible" :student-id="detailStudentId" />
+
+    <!-- 签到照片弹窗 -->
+    <el-dialog v-model="photoVisible" title="签到照片" width="420px" destroy-on-close>
+      <div v-if="photoUrl" class="photo-preview">
+        <img :src="photoUrl" style="width: 100%; border-radius: 8px; display: block" />
+        <div class="photo-info">
+          <p><strong>时间：</strong>{{ formatTime(photoRecord?.timestamp) }}</p>
+          <p><strong>状态：</strong>
+            <span :class="['status-tag', photoRecord?.status]">
+              {{ photoRecord?.status === 'success' ? '成功' : '失败' }}
+            </span>
+          </p>
+          <p v-if="photoRecord?.course_name"><strong>课程：</strong>{{ photoRecord.course_name }}</p>
+          <p v-if="photoRecord?.message"><strong>备注：</strong>{{ photoRecord.message }}</p>
+        </div>
+      </div>
+      <div v-else style="text-align: center; color: #999; padding: 40px">
+        暂无签到照片
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -65,16 +84,22 @@
 import { onMounted, reactive, ref } from 'vue'
 import { Check, Close, Histogram, Refresh, User } from '@element-plus/icons-vue'
 import { statisticsApi, attendanceApi } from '../api/modules'
-import StudentDetail from '../components/StudentDetail.vue'
 
-const detailVisible = ref(false)
-const detailStudentId = ref(null)
+const photoVisible = ref(false)
+const photoUrl = ref('')
+const photoRecord = ref(null)
 
-function showDetail(student) {
-  if (student?.id) {
-    detailStudentId.value = student.id
-    detailVisible.value = true
-  }
+function formatTime(ts) {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function showPhoto(row) {
+  photoUrl.value = row.photo_url || ''
+  photoRecord.value = row
+  photoVisible.value = true
 }
 
 const stats = reactive({ total_students: 0, success_count: 0, failed_count: 0, activity_count: 0 })
