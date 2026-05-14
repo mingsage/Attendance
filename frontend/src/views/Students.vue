@@ -7,6 +7,7 @@
         <el-button :icon="Search" @click="load">查询</el-button>
         <input ref="batchInputRef" hidden type="file" accept="image/png,image/jpeg" multiple @change="batchChanged" />
         <el-button :icon="FolderAdd" @click="batchInputRef.click()">批量导入人脸</el-button>
+        <el-button :icon="UserFilled" :disabled="!selectedIds.length" @click="batchCreateAccounts">创建账号</el-button>
         <el-button type="danger" :icon="Delete" :disabled="!selectedIds.length" @click="batchRemove">批量删除</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增学生</el-button>
       </div>
@@ -172,7 +173,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  CameraFilled, Check, Delete, Edit, FolderAdd, Plus, Search, UploadFilled
+  CameraFilled, Check, Delete, Edit, FolderAdd, Plus, Search, UploadFilled, UserFilled
 } from '@element-plus/icons-vue'
 import { studentApi } from '../api/modules'
 
@@ -252,6 +253,13 @@ async function batchRemove() {
   }
   tableRef.value?.clearSelection()
   await load()
+}
+
+async function batchCreateAccounts() {
+  if (!selectedIds.value.length) return
+  await ElMessageBox.confirm(`为选中的 ${selectedIds.value.length} 名学生创建登录账号？密码默认为 123456`, '创建账号')
+  const { data } = await studentApi.batchCreateAccounts({ student_ids: selectedIds.value, default_password: '123456' })
+  ElMessage.success(`已创建 ${data.created_count} 个账号`)
 }
 
 // ---- 人脸录入 ----
