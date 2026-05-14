@@ -246,6 +246,7 @@ class FaceService:
             return None
         return self._manual_feature(image, faces[0])
 
+
     @staticmethod
     def _score(probe: np.ndarray, feature: np.ndarray) -> float | None:
         if feature.size == 0 or feature.shape != probe.shape:

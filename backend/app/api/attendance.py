@@ -12,11 +12,12 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.deps import get_current_user, require_teacher
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.models.activity import ActivityParticipation
 from app.models.attendance import AttendanceRecord
 from app.models.emotion import EmotionRecord
 from app.models.student import Student
 from app.models.user import User
-from app.schemas.attendance import AttendanceOut, CheckInResponse
+from app.schemas.attendance import ActivityParticipationItem, AttendanceOut, CheckInResponse
 from app.services.emotion_service import emotion_service
 from app.services.export_service import build_attendance_workbook
 from app.services.face_service import decode_array, face_service
@@ -319,7 +320,33 @@ def records(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return _query_records(db, user, keyword, status, course_name).limit(limit).all()
+    records = _query_records(db, user, keyword, status, course_name).limit(limit).all()
+
+    # 为每条记录附上学生的活动参与信息
+    student_ids = {r.student_id for r in records if r.student_id}
+    if student_ids:
+        participations = (
+            db.query(ActivityParticipation)
+            .filter(ActivityParticipation.student_id.in_(student_ids))
+            .order_by(ActivityParticipation.activity_date.desc())
+            .all()
+        )
+        acts_by_student: dict[int, list[ActivityParticipationItem]] = {}
+        for p in participations:
+            acts_by_student.setdefault(p.student_id, []).append(
+                ActivityParticipationItem(
+                    activity_name=p.activity_name,
+                    activity_date=p.activity_date.isoformat(),
+                    confidence=round(p.confidence, 3),
+                )
+            )
+        for r in records:
+            r.activities = acts_by_student.get(r.student_id, [])
+    else:
+        for r in records:
+            r.activities = []
+
+    return records
 
 
 @router.get("/export")

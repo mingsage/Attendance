@@ -62,6 +62,19 @@
 
     <!-- 考勤明细表 -->
     <el-table ref="tableRef" :data="rows" class="section" stripe border @sort-change="onSort" @row-click="showDetailFromRow" @selection-change="onSelectionChange" style="cursor: pointer">
+      <el-table-column type="expand" width="40">
+        <template #default="{ row }">
+          <div v-if="row.activities?.length" class="expand-activities">
+            <div class="expand-title">参与活动</div>
+            <div v-for="act in row.activities" :key="act.activity_name + act.activity_date" class="expand-item">
+              <span class="expand-act-name">{{ act.activity_name }}</span>
+              <span class="expand-act-date">{{ act.activity_date }}</span>
+              <span class="expand-act-conf">置信度 {{ (act.confidence * 100).toFixed(1) }}%</span>
+            </div>
+          </div>
+          <div v-else class="expand-empty">暂无活动参与记录</div>
+        </template>
+      </el-table-column>
       <el-table-column type="selection" width="40" />
       <el-table-column prop="timestamp" label="时间" width="170" sortable="custom">
         <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
@@ -344,6 +357,54 @@ onMounted(() => {
   background: #fef2f2;
   border: 1px solid #fecaca;
   border-radius: 8px;
+}
+
+.expand-activities {
+  padding: 8px 16px;
+}
+
+.expand-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.expand-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 12px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+.expand-item:last-child {
+  margin-bottom: 0;
+}
+
+.expand-act-name {
+  font-weight: 500;
+  color: #2563eb;
+}
+
+.expand-act-date {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.expand-act-conf {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-left: auto;
+}
+
+.expand-empty {
+  padding: 12px 16px;
+  color: #9ca3af;
+  font-size: 13px;
 }
 
 .absent-label {
