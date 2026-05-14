@@ -41,6 +41,7 @@
           <el-button size="small" :icon="CameraFilled" @click.stop="openFaceDialog(row)">录入人脸</el-button>
           <input ref="faceUploadInput" hidden type="file" accept="image/png,image/jpeg" @change="handleFileChange" />
           <el-button size="small" :icon="Edit" @click.stop="openEdit(row)">编辑</el-button>
+          <el-button size="small" type="warning" @click.stop="resetPwd(row)">重置密码</el-button>
           <el-button size="small" type="danger" :icon="Delete" @click.stop="remove(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -225,10 +226,20 @@ function openEdit(row) {
 }
 
 async function save() {
-  if (form.id) await studentApi.update(form.id, form)
-  else await studentApi.create(form)
+  if (form.id) { await studentApi.update(form.id, form) }
+  else {
+    const { data } = await studentApi.create(form)
+    // 自动创建登录账号
+    try { await studentApi.batchCreateAccounts({ student_ids: [data.id], default_password: '123456' }) } catch {}
+  }
   visible.value = false
   await load()
+}
+
+async function resetPwd(row) {
+  await ElMessageBox.confirm(`重置 ${row.name} 的密码为 123456？`, '重置密码')
+  await studentApi.batchCreateAccounts({ student_ids: [row.id], default_password: '123456' })
+  ElMessage.success('密码已重置为 123456')
 }
 
 async function remove(row) {

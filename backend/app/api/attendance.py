@@ -56,27 +56,42 @@ def _query_records(db, user, keyword="", status=""):
 
 # ── 轻量识别（不写库）───────────────────────────────────
 
+# 候选人缓存（每 30 秒刷新）
+_candidates_cache: list = []
+_candidates_ts: float = 0
+
+
+def _get_candidates():
+    global _candidates_cache, _candidates_ts
+    import time
+    now = time.time()
+    if _candidates_cache and now - _candidates_ts < 30:
+        return _candidates_cache
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        _candidates_cache = [
+            (s.id, decode_array(s.face_encoding), s.face_image_path)
+            for s in db.query(Student).filter(Student.face_encoding.isnot(None)).all()
+        ]
+        _candidates_ts = now
+    finally:
+        db.close()
+    return _candidates_cache
+
+
 @router.post("/recognize", response_model=RecognizeResponse)
 async def recognize(
     file: UploadFile = File(...),
     _: User = Depends(get_current_user),
 ):
     """轻量识别：检测人脸 + 比对，不写库，用于前端实时预览。"""
-    from app.core.database import SessionLocal
     image = await read_image(file)
     details = face_service.detect_face_details(image)
     if not details:
         return RecognizeResponse(faces=[], face_count=0, matched=False)
 
-    db_local = SessionLocal()
-    try:
-        candidates = [
-            (student.id, decode_array(student.face_encoding), student.face_image_path)
-            for student in db_local.query(Student).filter(Student.face_encoding.isnot(None)).all()
-        ]
-    finally:
-        db_local.close()
-
+    candidates = _get_candidates()
     faces: list[RecognizeFace] = []
     matched_any = False
     for face_info in details:
@@ -88,7 +103,12 @@ async def recognize(
         matched_id, confidence = face_service.identify(image, probe, candidates)
         if matched_id and confidence >= get_settings().face_threshold:
             matched_any = True
-            faces.append(RecognizeFace(bbox=bbox, matched=True, student=_get_student_out(db_local, matched_id), confidence=confidence))
+            from app.core.database import SessionLocal
+            db = SessionLocal()
+            try:
+                faces.append(RecognizeFace(bbox=bbox, matched=True, student=_get_student_out(db, matched_id), confidence=confidence))
+            finally:
+                db.close()
         else:
             faces.append(RecognizeFace(bbox=bbox, matched=False, confidence=confidence))
     return RecognizeResponse(faces=faces, face_count=len(faces), matched=matched_any)

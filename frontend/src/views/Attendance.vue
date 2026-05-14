@@ -91,6 +91,7 @@ const challenge = reactive({ action: '', text: '' })
 let cameraStream = null
 let recogTimer = null
 let lastRecognizeFile = null
+let recogBusy = false
 
 function emotionIcon(t) { return ({ happy:'😊',sad:'😢',angry:'😠',surprised:'😮',fearful:'😨',disgusted:'🤢',neutral:'😐' })[t]||'' }
 function formatTime(ts) { if(!ts) return '-'; const d=new Date(ts); const pad=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` }
@@ -111,18 +112,22 @@ function stopRecognition() { if (recogTimer) { clearInterval(recogTimer); recogT
 function startRecognition() {
   stopRecognition()
   recogTimer = setInterval(() => {
-    if (!cameraActive.value || mode.value !== 'realtime') return
+    if (!cameraActive.value || mode.value !== 'realtime' || recogBusy) return
     captureAndRecognize()
-  }, 600)
+  }, 1500)
 }
 
 function captureAndRecognize() {
   const video = videoRef.value; if (!video?.videoWidth) return
+  recogBusy = true
+  // 缩小分辨率加速传输和检测
+  const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight))
   const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth; canvas.height = video.videoHeight
-  canvas.getContext('2d').drawImage(video, 0, 0)
+  canvas.width = Math.round(video.videoWidth * scale)
+  canvas.height = Math.round(video.videoHeight * scale)
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
   canvas.toBlob(async (blob) => {
-    if (!blob) return
+    if (!blob) { recogBusy = false; return }
     lastRecognizeFile = new File([blob], 'recog.jpg', { type: 'image/jpeg' })
     try {
       const { data } = await attendanceApi.recognize(lastRecognizeFile)
@@ -138,7 +143,8 @@ function captureAndRecognize() {
         recognized.value = false
       }
     } catch { recognized.value = false }
-  }, 'image/jpeg', 0.92)
+    recogBusy = false
+  }, 'image/jpeg', 0.6)
 }
 
 function drawFaceBoxes(faces) {
