@@ -60,9 +60,9 @@ async def check_in(
     if len(faces) == 0:
         raise HTTPException(status_code=400, detail="未检测到人脸，请确保正对摄像头且光线充足")
     if len(faces) > 1:
-        raise HTTPException(status_code=400, detail="检测到多张人脸，请确保画面中只有您一人")
-
-    box = faces[0]
+        box = max(faces, key=lambda f: f[2] * f[3])
+    else:
+        box = faces[0]
     quality_ok, quality_msg = face_service.check_face_quality(box, image.shape)
     if not quality_ok:
         raise HTTPException(status_code=400, detail=quality_msg)
@@ -108,7 +108,7 @@ async def check_in(
         liveness_result_msg = "活体检测已关闭"
 
     # ── 情绪分析 ──
-    emotion, emotion_confidence = emotion_service.analyze(image, faces[0])
+    emotion, emotion_confidence = emotion_service.analyze(image, box)
 
     # ── 人脸识别 ──
     candidates = [
@@ -346,7 +346,7 @@ def delete_record(record_id: int, db: Session = Depends(get_db)):
     record = db.get(AttendanceRecord, record_id)
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
-    if record.photo_path:
+    if record.photo_path and not record.photo_path.startswith("group_photos/"):
         try:
             photo = get_settings().upload_dir / record.photo_path
             if photo.exists():
@@ -373,7 +373,7 @@ def batch_delete_records(payload: _BatchDeleteRequest, db: Session = Depends(get
     """批量删除考勤记录及对应的签到照片和情绪记录。"""
     records = db.query(AttendanceRecord).filter(AttendanceRecord.id.in_(payload.record_ids)).all()
     for record in records:
-        if record.photo_path:
+        if record.photo_path and not record.photo_path.startswith("group_photos/"):
             try:
                 photo = get_settings().upload_dir / record.photo_path
                 if photo.exists():

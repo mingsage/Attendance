@@ -34,20 +34,6 @@
           <p>点击下方按钮开启摄像头</p>
         </div>
 
-        <!-- 倒计时 overlay -->
-        <transition name="countdown-fade">
-          <div v-if="countdown > 0" class="countdown-overlay">
-            <svg class="countdown-ring" viewBox="0 0 100 100">
-              <circle class="countdown-bg" cx="50" cy="50" r="44" />
-              <circle
-                class="countdown-progress"
-                cx="50" cy="50" r="44"
-                :style="{ strokeDashoffset: 276 * (1 - countdown / countdownTotal) }"
-              />
-            </svg>
-            <span class="countdown-number">{{ countdown }}</span>
-          </div>
-        </transition>
 
         <!-- 连续捕捉状态 -->
         <transition name="status-fade">
@@ -90,12 +76,9 @@
           刷新动作
         </el-button>
         <el-button v-if="cameraActive" type="success" :icon="Check" :loading="loading" class="capture-btn" @click="captureAndSubmit">
-          完成考勤
+          手动捕捉
         </el-button>
-        <el-button :icon="Timer" :disabled="autoCapturing" @click="autoCapture">
-          3 秒自动拍照
-        </el-button>
-        <el-button :type="continuousMode ? 'danger' : 'warning'" :icon="VideoCamera" @click="toggleContinuousCapture">
+<el-button :type="continuousMode ? 'danger' : 'warning'" :icon="VideoCamera" @click="toggleContinuousCapture">
           {{ continuousMode ? '停止捕捉' : '自动捕捉' }}
         </el-button>
       </div>
@@ -171,12 +154,9 @@ const courseName = ref('默认课程')
 const loading = ref(false)
 const result = ref(null)
 const statusStep = ref(0)
-const autoCapturing = ref(false)
 const livenessEnabled = ref(false)
 const cameraActive = ref(false)
 const faceDetected = ref(false)
-const countdown = ref(0)
-const countdownTotal = ref(3)
 const continuousMode = ref(false)
 const captureStatus = ref('')
 const statusType = ref('info')
@@ -294,12 +274,48 @@ async function submit(file) {
   }
 }
 
-function captureAndSubmit() {
+async function captureAndSubmit() {
   const video = videoRef.value
   if (!video?.videoWidth) {
     ElMessage.warning('请先开启摄像头')
     return
   }
+
+  loading.value = true
+
+  // Phase 1: 多步骤动作验证（与自动捕捉一致）
+  if (livenessEnabled.value && challengeActions.value.length > 0) {
+    statusStep.value = 2
+    while (challengeStep.value < challengeActions.value.length) {
+      const action = challengeActions.value[challengeStep.value]
+      const cvs = document.createElement('canvas')
+      cvs.width = video.videoWidth
+      cvs.height = video.videoHeight
+      cvs.getContext('2d').drawImage(video, 0, 0)
+
+      const blob = await new Promise((resolve) => {
+        cvs.toBlob(resolve, 'image/jpeg', 0.95)
+      })
+      if (!blob) break
+
+      try {
+        const verifyRes = await attendanceApi.verifyAction(blob, action.code)
+        if (verifyRes.data.passed) {
+          completedActions.value.push(action.code)
+          challengeStep.value++
+        }
+      } catch {
+        // 忽略错误，继续下一帧检测
+      }
+
+      if (challengeStep.value < challengeActions.value.length) {
+        await new Promise((r) => setTimeout(r, 300))
+      }
+    }
+  }
+
+  // Phase 2: 签到拍照
+  statusStep.value = 3
   const canvas = document.createElement('canvas')
   canvas.width = video.videoWidth
   canvas.height = video.videoHeight
@@ -307,6 +323,7 @@ function captureAndSubmit() {
   canvas.toBlob((blob) => {
     if (!blob) {
       ElMessage.error('拍照失败')
+      loading.value = false
       return
     }
     submit(new File([blob], 'check-in.jpg', { type: 'image/jpeg' }))
@@ -333,22 +350,6 @@ async function saveLiveness(value) {
   livenessEnabled.value = data.enabled
   await loadChallenge()
   ElMessage.success(data.enabled ? '活体检测已开启' : '活体检测已关闭')
-}
-
-async function autoCapture() {
-  if (!videoRef.value?.videoWidth) await startCamera()
-  autoCapturing.value = true
-  statusStep.value = 2
-  countdownTotal.value = 3
-  countdown.value = 3
-  const timer = setInterval(() => {
-    countdown.value--
-    if (countdown.value <= 0) {
-      clearInterval(timer)
-      autoCapturing.value = false
-      captureAndSubmit()
-    }
-  }, 1000)
 }
 
 async function toggleContinuousCapture() {
@@ -614,56 +615,6 @@ onBeforeUnmount(() => {
 }
 
 /* 自动拍照倒计时 */
-.countdown-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: 10;
-}
-
-.countdown-ring {
-  width: 96px;
-  height: 96px;
-  transform: rotate(-90deg);
-}
-
-.countdown-bg {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.15);
-  stroke-width: 5;
-}
-
-.countdown-progress {
-  fill: none;
-  stroke: #10b981;
-  stroke-width: 5;
-  stroke-linecap: round;
-  stroke-dasharray: 276;
-  transition: stroke-dashoffset 0.9s linear;
-}
-
-.countdown-number {
-  position: absolute;
-  font-size: 40px;
-  font-weight: 700;
-  color: #fff;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  user-select: none;
-}
-
-.countdown-fade-enter-active {
-  transition: opacity 0.25s ease;
-}
-.countdown-fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.countdown-fade-enter-from,
-.countdown-fade-leave-to {
-  opacity: 0;
-}
 
 /* 连续捕捉状态条 */
 .capture-status-bar {

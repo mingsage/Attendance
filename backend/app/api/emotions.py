@@ -12,6 +12,20 @@ from app.models.user import User
 router = APIRouter(prefix="/emotions", tags=["情绪记录"])
 
 
+@router.delete("/records")
+def delete_all_emotions(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """一键删除所有情绪记录。"""
+    if user.role not in ("admin", "teacher"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="仅管理员和教师可删除情绪记录")
+    count = db.query(EmotionRecord).delete()
+    db.commit()
+    return {"deleted": count, "message": f"已删除 {count} 条情绪记录"}
+
+
 @router.get("/records")
 def emotion_records(
     keyword: str = "",
