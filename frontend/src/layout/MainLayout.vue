@@ -15,34 +15,21 @@
         text-color="#9ca3af"
         active-text-color="#ffffff"
       >
-        <el-menu-item index="/dashboard">
-          <el-icon><DataBoard /></el-icon>
-          <span>总览</span>
-        </el-menu-item>
-        <el-menu-item index="/attendance">
-          <el-icon><Camera /></el-icon>
-          <span>考勤签到</span>
-        </el-menu-item>
-        <el-menu-item index="/records">
-          <el-icon><Tickets /></el-icon>
-          <span>考勤记录</span>
-        </el-menu-item>
-        <el-menu-item index="/students">
-          <el-icon><User /></el-icon>
-          <span>学生管理</span>
-        </el-menu-item>
-        <el-menu-item index="/group-photo">
-          <el-icon><Picture /></el-icon>
-          <span>合照识别</span>
-        </el-menu-item>
-        <el-menu-item index="/emotion-stats">
-          <el-icon><TrendCharts /></el-icon>
-          <span>情绪统计</span>
-        </el-menu-item>
-        <el-menu-item index="/activity-stats">
-          <el-icon><Histogram /></el-icon>
-          <span>考勤统计</span>
-        </el-menu-item>
+        <template v-if="auth.role === 'teacher'">
+          <el-menu-item index="/dashboard"><el-icon><DataBoard /></el-icon><span>总览</span></el-menu-item>
+          <el-menu-item index="/courses"><el-icon><Reading /></el-icon><span>课程管理</span></el-menu-item>
+          <el-menu-item index="/groups"><el-icon><Connection /></el-icon><span>群组管理</span></el-menu-item>
+          <el-menu-item index="/records"><el-icon><Tickets /></el-icon><span>考勤记录</span></el-menu-item>
+          <el-menu-item index="/group-photo"><el-icon><Picture /></el-icon><span>合照识别</span></el-menu-item>
+          <el-menu-item index="/students"><el-icon><User /></el-icon><span>学生管理</span></el-menu-item>
+          <el-menu-item index="/emotion-stats"><el-icon><TrendCharts /></el-icon><span>情绪统计</span></el-menu-item>
+          <el-menu-item index="/activity-stats"><el-icon><Histogram /></el-icon><span>考勤统计</span></el-menu-item>
+        </template>
+        <template v-else>
+          <el-menu-item index="/attendance"><el-icon><Camera /></el-icon><span>考勤签到</span></el-menu-item>
+          <el-menu-item index="/my-attendance"><el-icon><Tickets /></el-icon><span>我的考勤</span></el-menu-item>
+          <el-menu-item index="/my-face"><el-icon><User /></el-icon><span>我的人脸</span></el-menu-item>
+        </template>
       </el-menu>
     </el-aside>
     <el-container>
@@ -80,8 +67,12 @@ import { useAuthStore } from '../stores/auth'
 const routeTitles = {
   '/dashboard': '总览面板',
   '/attendance': '考勤签到',
+  '/my-attendance': '我的考勤',
+  '/my-face': '我的人脸',
   '/records': '考勤记录',
   '/students': '学生管理',
+  '/groups': '群组管理',
+  '/courses': '课程管理',
   '/group-photo': '合照识别',
   '/emotion-stats': '情绪统计',
   '/activity-stats': '考勤统计',

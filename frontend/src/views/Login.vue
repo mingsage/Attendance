@@ -22,7 +22,7 @@
         <el-button type="primary" :loading="loading" size="large" class="login-btn" @click="submit">登 录</el-button>
       </el-form>
       <p class="login-hint">
-        默认教师账号：<code>teacher / 123456</code>
+        教师 <code>teacher / 123456</code> | 学生账号由教师创建
       </p>
     </div>
   </div>
