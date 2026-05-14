@@ -10,3 +10,73 @@ WARNING:tensorflow:From C:\Users\MingS\anaconda3\Lib\site-packages\tf_keras\src\
 INFO:     Started server process [105672]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
+ERROR:    Traceback (most recent call last):
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\base_events.py", line 712, in run_until_complete
+    self.run_forever()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\base_events.py", line 683, in run_forever
+    self._run_once()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\base_events.py", line 2012, in _run_once
+    event_list = self._selector.select(timeout)
+  File "C:\Users\MingS\anaconda3\Lib\selectors.py", line 314, in select
+    r, w, _ = self._select(self._readers, self._writers, [], timeout)
+              ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\selectors.py", line 305, in _select
+    r, w, x = select.select(r, w, w, timeout)
+              ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+OSError: [WinError 10055] 由于系统缓冲区空间不足或队列已满，不能执行套接字上的操作。
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\MingS\anaconda3\Lib\site-packages\starlette\routing.py", line 741, in lifespan
+    await receive()
+  File "C:\Users\MingS\anaconda3\Lib\site-packages\uvicorn\lifespan\on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\queues.py", line 186, in get
+    await getter
+asyncio.exceptions.CancelledError
+
+Process SpawnProcess-1:
+Traceback (most recent call last):
+  File "C:\Users\MingS\anaconda3\Lib\multiprocessing\process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "C:\Users\MingS\anaconda3\Lib\multiprocessing\process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\site-packages\uvicorn\_subprocess.py", line 80, in subprocess_started
+    target(sockets=sockets)
+    ~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\site-packages\uvicorn\server.py", line 65, in run
+    return asyncio.run(self.serve(sockets=sockets))
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\base_events.py", line 712, in run_until_complete
+    self.run_forever()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\base_events.py", line 683, in run_forever
+    self._run_once()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\MingS\anaconda3\Lib\asyncio\base_events.py", line 2012, in _run_once
+    event_list = self._selector.select(timeout)
+  File "C:\Users\MingS\anaconda3\Lib\selectors.py", line 314, in select
+    r, w, _ = self._select(self._readers, self._writers, [], timeout)
+              ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MingS\anaconda3\Lib\selectors.py", line 305, in _select
+    r, w, x = select.select(r, w, w, timeout)
+              ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+OSError: [WinError 10055] 由于系统缓冲区空间不足或队列已满，不能执行套接字上的操作。
