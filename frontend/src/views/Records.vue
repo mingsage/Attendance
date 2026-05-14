@@ -15,7 +15,7 @@
           <el-option label="失败" value="failed" />
         </el-select>
         <el-button :icon="Search" @click="load">查询</el-button>
-        <el-button type="danger" :icon="Delete" :disabled="!selectedRows.length" @click="batchDeleteRecords">
+        <el-button v-if="auth.role === 'teacher'" type="danger" :icon="Delete" :disabled="!selectedRows.length" @click="batchDeleteRecords">
           批量删除 ({{ selectedRows.length }})
         </el-button>
         <el-dropdown trigger="click" @command="handleExport">
@@ -107,7 +107,7 @@
       </el-table-column>
       <el-table-column label="操作" width="70" fixed="right">
         <template #default="{ row }">
-          <el-button type="danger" size="small" :icon="Delete" circle @click.stop="deleteRecord(row)" />
+          <el-button v-if="auth.role === 'teacher'" type="danger" size="small" :icon="Delete" circle @click.stop="deleteRecord(row)" />
         </template>
       </el-table-column>
     </el-table>
@@ -139,6 +139,9 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Download, Search } from '@element-plus/icons-vue'
 import { attendanceApi, statisticsApi } from '../api/modules'
+import { useAuthStore } from '../stores/auth'
+
+const auth = useAuthStore()
 
 const EMOTION_MAP = {
   happy: '😊 Happy',

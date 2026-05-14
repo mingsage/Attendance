@@ -22,6 +22,12 @@ export const studentApi = {
     const form = new FormData()
     files.forEach((file) => form.append('files', file))
     return http.post('/students/faces/batch', form)
+  },
+  getMe: () => http.get('/students/me'),
+  uploadMyFace: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return http.post('/students/me/face', form)
   }
 }
 

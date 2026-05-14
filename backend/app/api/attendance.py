@@ -53,7 +53,7 @@ async def check_in(
     challenge_action: str = Query("", description="活体挑战动作：smile/turn_left/turn_right/open_mouth"),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_teacher),
 ):
     image = await read_image(file)
     faces = face_service.detect_faces(image, allow_fallback=False)
@@ -303,7 +303,7 @@ def get_liveness_settings(_: User = Depends(get_current_user)):
     return {"enabled": LIVENESS_ENABLED}
 
 
-@router.put("/liveness-settings")
+@router.put("/liveness-settings", dependencies=[Depends(require_teacher)])
 def update_liveness_settings(enabled: bool, _: User = Depends(get_current_user)):
     global LIVENESS_ENABLED
     LIVENESS_ENABLED = enabled

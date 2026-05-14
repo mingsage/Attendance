@@ -19,7 +19,7 @@
           <el-icon><DataBoard /></el-icon>
           <span>总览</span>
         </el-menu-item>
-        <el-menu-item index="/attendance">
+        <el-menu-item v-if="auth.role === 'teacher'" index="/attendance">
           <el-icon><Camera /></el-icon>
           <span>考勤签到</span>
         </el-menu-item>
@@ -27,13 +27,17 @@
           <el-icon><Tickets /></el-icon>
           <span>考勤记录</span>
         </el-menu-item>
-        <el-menu-item index="/students">
+        <el-menu-item v-if="auth.role === 'teacher'" index="/students">
           <el-icon><User /></el-icon>
           <span>学生管理</span>
         </el-menu-item>
-        <el-menu-item index="/group-photo">
+        <el-menu-item v-if="auth.role === 'teacher'" index="/group-photo">
           <el-icon><Picture /></el-icon>
           <span>合照识别</span>
+        </el-menu-item>
+        <el-menu-item v-if="auth.role === 'student'" index="/my-profile">
+          <el-icon><UserFilled /></el-icon>
+          <span>我的人脸</span>
         </el-menu-item>
         <el-menu-item index="/emotion-stats">
           <el-icon><TrendCharts /></el-icon>
@@ -70,7 +74,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { SwitchButton, User } from '@element-plus/icons-vue'
+import { SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 

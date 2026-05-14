@@ -6,9 +6,10 @@ import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_teacher
+from app.api.deps import get_current_user, require_teacher
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.security import hash_password
 from app.models import (
     ActivityParticipation,
     AttendanceRecord,
@@ -63,6 +64,21 @@ def to_out(student: Student) -> StudentOut:
         face_image_path=raw_path,
         face_image_url=face_image_url,
     )
+
+
+def _ensure_student_user(student: Student, db: Session) -> User:
+    """确保学生有对应的登录账号（username=密码=学号）。"""
+    existing = db.query(User).filter(User.student_id == student.id).first()
+    if existing:
+        return existing
+    user = User(
+        username=student.student_no,
+        password_hash=hash_password(student.student_no),
+        role="student",
+        student_id=student.id,
+    )
+    db.add(user)
+    return user
 
 
 def merge_face_feature(student: Student, feature: np.ndarray) -> None:
@@ -143,6 +159,20 @@ def get_student_by_no(student_no: str, db: Session = Depends(get_db)):
     return to_out(student)
 
 
+@router.get("/me", response_model=StudentOut)
+def get_my_info(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """获取当前学生自己的信息。"""
+    if not user.student_id:
+        raise HTTPException(status_code=400, detail="当前账号未绑定学生信息")
+    student = db.get(Student, user.student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="学生不存在")
+    return to_out(student)
+
+
 @router.get("/{student_id}", response_model=StudentOut)
 def get_student(student_id: int, db: Session = Depends(get_db)):
     student = db.get(Student, student_id)
@@ -159,6 +189,8 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
     db.add(student)
     db.commit()
     db.refresh(student)
+    _ensure_student_user(student, db)
+    db.commit()
     return to_out(student)
 
 
@@ -183,6 +215,23 @@ def delete_student(student_id: int, db: Session = Depends(get_db)):
     student = db.get(Student, student_id)
     if not student:
         raise HTTPException(status_code=404, detail="学生不存在")
+
+    backend_root = resolve_backend_root()
+    face_dir = resolve_face_dir(backend_root)
+
+    db.query(AttendanceRecord).filter(
+        AttendanceRecord.student_id == student.id
+    ).delete(synchronize_session=False)
+    db.query(EmotionRecord).filter(EmotionRecord.student_id == student.id).delete(
+        synchronize_session=False
+    )
+    db.query(ActivityParticipation).filter(
+        ActivityParticipation.student_id == student.id
+    ).delete(synchronize_session=False)
+    db.query(User).filter(User.student_id == student.id).delete(
+        synchronize_session=False
+    )
+    delete_face_files(student, face_dir, backend_root)
     db.delete(student)
     db.commit()
     return {"ok": True}
@@ -232,6 +281,34 @@ def batch_delete_students(
         missing_ids=missing_ids,
         deleted_images=deleted_images,
     )
+
+
+@router.post(
+    "/me/face",
+    response_model=StudentOut,
+)
+async def upload_my_face(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """学生自己上传/拍摄人脸照片。"""
+    if not user.student_id:
+        raise HTTPException(status_code=400, detail="当前账号未绑定学生信息")
+    student = db.get(Student, user.student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="学生不存在")
+
+    image = await read_image(file)
+    feature = face_service.extract_detected_feature(image)
+    if feature is None:
+        raise HTTPException(status_code=400, detail=FACE_NOT_FOUND)
+
+    student.face_image_path = save_face_image(student, image, file.filename)
+    merge_face_feature(student, feature)
+    db.commit()
+    db.refresh(student)
+    return to_out(student)
 
 
 @router.post(
@@ -305,6 +382,8 @@ async def batch_upload_faces(
                     student.class_name = class_name
                 if gender:
                     student.gender = gender
+
+            _ensure_student_user(student, db)
 
             student.face_image_path = save_face_image(student, image, file.filename)
             merge_face_feature(student, feature)

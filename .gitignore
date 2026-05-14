@@ -10,3 +10,5 @@ uploads/
 .claude/
 face_data/*
 *.log
+.claude/*
+.vscode/*
