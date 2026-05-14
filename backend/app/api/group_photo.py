@@ -43,7 +43,7 @@ async def recognize_group_photo(
     db: Session = Depends(get_db),
     _=Depends(require_teacher),
 ):
-    image = await read_image(file)
+    image = await read_image(file, max_size=1000 * 1024 * 1024)
     await file.seek(0)
     saved_path = await save_upload(file, get_settings().upload_dir)
     faces = face_service.detect_faces(image)
