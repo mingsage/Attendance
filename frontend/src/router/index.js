@@ -9,11 +9,12 @@ const routes = [
     children: [
       { path: '', redirect: '/dashboard' },
       { path: 'dashboard', component: () => import('../views/Dashboard.vue') },
-      { path: 'attendance', component: () => import('../views/Attendance.vue') },
+      { path: 'attendance', component: () => import('../views/Attendance.vue'), meta: { role: 'teacher' } },
       { path: 'records', component: () => import('../views/Records.vue') },
-      { path: 'students', component: () => import('../views/Students.vue') },
-      { path: 'group-photo', component: () => import('../views/GroupPhoto.vue') },
+      { path: 'students', component: () => import('../views/Students.vue'), meta: { role: 'teacher' } },
+      { path: 'group-photo', component: () => import('../views/GroupPhoto.vue'), meta: { role: 'teacher' } },
       { path: 'emotion-stats', component: () => import('../views/EmotionStats.vue') },
+      { path: 'my-profile', component: () => import('../views/MyProfile.vue'), meta: { role: 'student' } },
       { path: 'activity-stats', redirect: '/records' }
     ]
   }
@@ -28,6 +29,7 @@ router.beforeEach((to) => {
   const auth = useAuthStore()
   if (to.path !== '/login' && !auth.isLoggedIn) return '/login'
   if (to.path === '/login' && auth.isLoggedIn) return '/dashboard'
+  if (to.meta?.role && auth.role !== to.meta.role) return '/dashboard'
   return true
 })
 

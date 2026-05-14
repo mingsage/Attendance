@@ -5,6 +5,7 @@
       <div class="toolbar-right">
         <el-input v-model="courseName" class="course-input" placeholder="课程名称" clearable />
         <el-switch
+          v-if="auth.role === 'teacher'"
           v-model="livenessEnabled"
           active-text="活体检测"
           inactive-text="活体检测关"
@@ -147,6 +148,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Refresh, Timer, VideoCamera } from '@element-plus/icons-vue'
 import { attendanceApi } from '../api/modules'
+import { useAuthStore } from '../stores/auth'
+
+const auth = useAuthStore()
 
 const videoRef = ref()
 const overlayRef = ref()
