@@ -18,25 +18,36 @@ from app.models.attendance import AttendanceRecord
 from app.models.emotion import EmotionRecord
 from app.models.student import Student
 from app.models.user import User
-from app.schemas.attendance import ActivityParticipationItem, AttendanceOut, CheckInResponse
+from app.schemas.attendance import (
+    ActivityParticipationItem,
+    AttendanceOut,
+    CheckInResponse,
+)
 from app.services.emotion_service import emotion_service
 from app.services.export_service import build_attendance_workbook
 from app.services.face_service import decode_array, face_service
 from app.services.image_utils import read_image
 from app.services.liveness_service import liveness_service
 
-
 router = APIRouter(prefix="/attendance", tags=["考勤"])
 
 LIVENESS_ENABLED = True
 LIVENESS_ACTIONS = [
-    {"code": "smile", "text": "请微笑后完成考勤"},
-    {"code": "turn_head", "text": "请左右转头后完成考勤"},
-    {"code": "open_mouth", "text": "请张嘴后完成考勤"},
+    {"code": "smile", "text": "请先保持自然表情，再微笑"},
+    {"code": "turn_left", "text": "请先正对摄像头，再向左转头"},
+    {"code": "turn_right", "text": "请先正对摄像头，再向右转头"},
+    {"code": "open_mouth", "text": "请先闭嘴保持自然，再张嘴"},
 ]
+LIVENESS_SESSION_SECONDS = 120
+LIVENESS_CHECKIN_GRACE_SECONDS = 15
+LIVENESS_ACTION_STEP_SECONDS = 6
+LIVENESS_MIN_ACTION_DELAY_SECONDS = 0.6
+LIVENESS_MAX_ACTION_ATTEMPTS = 6
 
 
-def _query_records(db: Session, user: User, keyword: str = "", status: str = "", course_name: str = ""):
+def _query_records(
+    db: Session, user: User, keyword: str = "", status: str = "", course_name: str = ""
+):
     query = db.query(AttendanceRecord).options(joinedload(AttendanceRecord.student))
     if user.role == "student" and user.student_id:
         query = query.filter(AttendanceRecord.student_id == user.student_id)
@@ -45,22 +56,28 @@ def _query_records(db: Session, user: User, keyword: str = "", status: str = "",
     if course_name:
         query = query.filter(AttendanceRecord.course_name == course_name)
     if keyword:
-        query = query.join(Student, isouter=True).filter((Student.name.contains(keyword)) | (Student.student_no.contains(keyword)))
+        query = query.join(Student, isouter=True).filter(
+            (Student.name.contains(keyword)) | (Student.student_no.contains(keyword))
+        )
     return query.order_by(AttendanceRecord.timestamp.desc())
 
 
 @router.post("/check-in", response_model=CheckInResponse)
 async def check_in(
     course_name: str = "默认课程",
-    challenge_action: str = Query("", description="活体挑战动作：smile/turn_left/turn_right/open_mouth"),
+    challenge_action: str = Query(
+        "", description="活体挑战动作：smile/turn_left/turn_right/open_mouth"
+    ),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _: User = Depends(require_teacher),
+    user: User = Depends(require_teacher),
 ):
     image = await read_image(file)
     faces = face_service.detect_faces(image, allow_fallback=False)
     if len(faces) == 0:
-        raise HTTPException(status_code=400, detail="未检测到人脸，请确保正对摄像头且光线充足")
+        raise HTTPException(
+            status_code=400, detail="未检测到人脸，请确保正对摄像头且光线充足"
+        )
     if len(faces) > 1:
         box = max(faces, key=lambda f: f[2] * f[3])
     else:
@@ -71,35 +88,27 @@ async def check_in(
 
     probe = face_service.extract_detected_feature(image)
     if probe is None:
-        raise HTTPException(status_code=400, detail="人脸质量不足，请靠近摄像头并保持正脸")
+        raise HTTPException(
+            status_code=400, detail="人脸质量不足，请靠近摄像头并保持正脸"
+        )
 
     # ── 活体检测（反欺骗分析 + 动作验证） ──
     if LIVENESS_ENABLED:
-        liveness_score, liveness_threshold, liveness_msg = liveness_service.analyze(image)
+        liveness_score, liveness_threshold, liveness_msg = liveness_service.analyze(
+            image, box
+        )
         anti_spoofing_ok = liveness_score >= liveness_threshold
 
-        action_ok = True
-        action_msg = ""
-        if challenge_action:
-            face_rows = face_service.detect_sface_rows(image)
-            if face_rows:
-                largest = max(face_rows, key=lambda r: float(r[2] * r[3]))
-                action_ok, action_msg = liveness_service.verify_action(
-                    image, challenge_action, largest
-                )
-            else:
-                action_ok = False
-                action_msg = "无法检测人脸关键点，请确保正对摄像头"
-
-        liveness_passed = anti_spoofing_ok and action_ok
+        session_ok, session_msg = _consume_verified_session(user.id)
+        liveness_passed = anti_spoofing_ok and session_ok
 
         if not liveness_passed:
             parts = []
             if not anti_spoofing_ok:
                 detail = liveness_msg.replace("活体检测失败：", "")
                 parts.append(detail or f"综合得分过低（{liveness_score}）")
-            if not action_ok:
-                parts.append(action_msg)
+            if not session_ok:
+                parts.append(session_msg)
             liveness_result_msg = "活体检测失败：" + "、".join(parts)
         else:
             liveness_result_msg = "活体检测通过"
@@ -118,7 +127,9 @@ async def check_in(
         for student in db.query(Student).filter(Student.face_encoding.isnot(None)).all()
     ]
     matched_id, confidence = face_service.identify(image, probe, candidates)
-    success = bool(matched_id and confidence >= get_settings().face_threshold and liveness_passed)
+    success = bool(
+        matched_id and confidence >= get_settings().face_threshold and liveness_passed
+    )
 
     # ── 构建消息 ──
     if success:
@@ -138,12 +149,17 @@ async def check_in(
     # 去重：同学生同课程的成功记录覆盖更新
     existing = None
     if success and matched_id:
-        existing = db.query(AttendanceRecord).filter(
-            AttendanceRecord.student_id == matched_id,
-            AttendanceRecord.course_name == course_name,
-            AttendanceRecord.status == "success",
-            func.date(AttendanceRecord.timestamp) == date.today(),
-        ).order_by(AttendanceRecord.timestamp.desc()).first()
+        existing = (
+            db.query(AttendanceRecord)
+            .filter(
+                AttendanceRecord.student_id == matched_id,
+                AttendanceRecord.course_name == course_name,
+                AttendanceRecord.status == "success",
+                func.date(AttendanceRecord.timestamp) == date.today(),
+            )
+            .order_by(AttendanceRecord.timestamp.desc())
+            .first()
+        )
 
     if existing:
         existing.confidence = round(confidence, 3)
@@ -165,11 +181,15 @@ async def check_in(
         )
         db.add(record)
         if success and matched_id:
-            db.add(EmotionRecord(
-                student_id=matched_id, emotion_type=emotion,
-                confidence=emotion_confidence, source="attendance",
-                timestamp=record.timestamp,
-            ))
+            db.add(
+                EmotionRecord(
+                    student_id=matched_id,
+                    emotion_type=emotion,
+                    confidence=emotion_confidence,
+                    source="attendance",
+                    timestamp=record.timestamp,
+                )
+            )
     db.commit()
     db.refresh(record)
 
@@ -178,7 +198,11 @@ async def check_in(
         photo_dir = get_settings().upload_dir / "checkin_photos"
         photo_dir.mkdir(parents=True, exist_ok=True)
         photo_filename = f"checkin_photos/{record.id}.jpg"
-        cv2.imwrite(str(get_settings().upload_dir / photo_filename), image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        cv2.imwrite(
+            str(get_settings().upload_dir / photo_filename),
+            image,
+            [cv2.IMWRITE_JPEG_QUALITY, 85],
+        )
         record.photo_path = photo_filename
         db.commit()
     except Exception:
@@ -200,10 +224,12 @@ async def detect_faces(
         h, w = image.shape[:2]
         largest_idx = max(range(len(faces)), key=lambda i: faces[i][2] * faces[i][3])
         for i, (x, y, fw, fh) in enumerate(faces):
-            result.append({
-                "bbox": [x / w, y / h, fw / w, fh / h],
-                "is_primary": i == largest_idx,
-            })
+            result.append(
+                {
+                    "bbox": [x / w, y / h, fw / w, fh / h],
+                    "is_primary": i == largest_idx,
+                }
+            )
     return {"faces": result}
 
 
@@ -214,7 +240,9 @@ _verify_sessions: dict[int, dict] = {}
   user_id: {
     "actions": [{"code": "smile", "text": "..."}, ...],
     "step": 0,
-    "turn_baseline": None | float,   # 转头检测的基线鼻位
+    "action_state": {},              # 当前 step 的动作基线和开始时间
+    "verified": false,               # 全部动作是否已完成
+    "verified_at": None | float,      # 最后一个动作完成时间
     "expires_at": float,
   }
 }
@@ -223,6 +251,78 @@ _verify_sessions: dict[int, dict] = {}
 
 def _clean_session(user_id: int) -> None:
     _verify_sessions.pop(user_id, None)
+
+
+def _mark_session_verified(session: dict) -> None:
+    now = time()
+    session["verified"] = True
+    session["verified_at"] = now
+    session["expires_at"] = now + LIVENESS_CHECKIN_GRACE_SECONDS
+
+
+def _step_state(session: dict, step: int, action: str) -> dict:
+    state = session.get("action_state") or {}
+    if state.get("step") != step or state.get("action") != action:
+        state = {
+            "step": step,
+            "action": action,
+            "started_at": time(),
+            "baseline": None,
+            "attempts": 0,
+            "min_mouth_open": 1.0,
+            "min_smile": 1.0,
+        }
+        session["action_state"] = state
+    return state
+
+
+def _action_step_expired(state: dict) -> bool:
+    return time() - float(state.get("started_at") or 0) > LIVENESS_ACTION_STEP_SECONDS
+
+
+def _advance_action_step(session: dict) -> bool:
+    session["step"] += 1
+    session["action_state"] = {}
+    all_done = session["step"] >= len(session["actions"])
+    if all_done:
+        _mark_session_verified(session)
+    return all_done
+
+
+def _register_action_attempt(user_id: int, state: dict) -> tuple[bool, str]:
+    elapsed = time() - float(state.get("started_at") or 0)
+    if elapsed < LIVENESS_MIN_ACTION_DELAY_SECONDS:
+        return False, "请按提示完成动作"
+
+    state["attempts"] = int(state.get("attempts") or 0) + 1
+    if state["attempts"] > LIVENESS_MAX_ACTION_ATTEMPTS:
+        _clean_session(user_id)
+        return False, "动作尝试过多，请刷新动作"
+    return True, ""
+
+
+def _consume_verified_session(user_id: int) -> tuple[bool, str]:
+    """最终签到必须消费一次刚完成的动作会话，避免直接上传视频帧绕过。"""
+    session = _verify_sessions.get(user_id)
+    if not session:
+        return False, "请先完成活体动作"
+
+    now = time()
+    if session.get("expires_at", 0) < now:
+        _clean_session(user_id)
+        return False, "活体动作已超时，请刷新动作"
+
+    actions = session.get("actions", [])
+    if not session.get("verified") or session.get("step", 0) < len(actions):
+        return False, "请先完成所有活体动作"
+
+    verified_at = session.get("verified_at") or 0
+    if now - verified_at > LIVENESS_CHECKIN_GRACE_SECONDS:
+        _clean_session(user_id)
+        return False, "动作验证已超时，请刷新动作后重试"
+
+    _clean_session(user_id)
+    return True, ""
 
 
 @router.post("/verify-action")
@@ -243,16 +343,21 @@ async def verify_action(
     # 获取会话
     session = _verify_sessions.get(user.id)
     if not session or session["expires_at"] < time():
-        # 会话过期或缺失 → 走无状态单次验证（兼容旧流程）
-        return await _verify_action_fallback(challenge_action, file)
+        _clean_session(user.id)
+        return {
+            "passed": False,
+            "all_done": False,
+            "message": "活体会话已过期，请刷新动作",
+        }
 
-    session["expires_at"] = time() + 120  # 续期
+    session["expires_at"] = time() + LIVENESS_SESSION_SECONDS  # 续期
 
     # 检查当前 step 是否匹配客户端的请求
     step = session["step"]
     actions = session["actions"]
     if step >= len(actions):
-        _clean_session(user.id)
+        if not session.get("verified"):
+            _mark_session_verified(session)
         return {"passed": True, "all_done": True, "message": "所有动作已完成"}
 
     expected = actions[step]["code"]
@@ -263,65 +368,130 @@ async def verify_action(
     image = await read_image(file)
     face_rows = face_service.detect_sface_rows(image)
     if not face_rows:
-        haar_faces = face_service.detect_faces(image, allow_fallback=False)
-        if not haar_faces:
-            return {"passed": False, "message": "未检测到人脸"}
-        return {"passed": True, "message": "无法验证动作"}
+        return {
+            "passed": False,
+            "all_done": False,
+            "message": "无法检测人脸关键点，请确保正对摄像头",
+        }
 
     largest = max(face_rows, key=lambda r: float(r[2] * r[3]))
 
-    # 转头用基线对比（防照片摇晃欺骗）
-    if challenge_action == "turn_head":
-        return _handle_turn_head(session, user.id, largest)
+    if challenge_action in ("turn_left", "turn_right", "turn_head"):
+        return _handle_turn_action(session, user.id, challenge_action, largest)
 
-    passed, msg = liveness_service.verify_action(image, challenge_action, largest)
-    if passed:
-        session["step"] = step + 1
-        all_done = session["step"] >= len(actions)
-        if all_done:
-            _clean_session(user.id)
-        label = {"smile": "微笑通过", "turn_head": "转头通过", "open_mouth": "张嘴通过"}
-        return {"passed": True, "message": msg or label.get(challenge_action, "动作通过"), "all_done": all_done}
+    if challenge_action in ("smile", "open_mouth"):
+        return _handle_expression_action(
+            session, user.id, challenge_action, image, largest
+        )
 
-    return {"passed": False, "message": msg}
+    return {
+        "passed": False,
+        "all_done": False,
+        "message": f"未知动作：{challenge_action}",
+    }
 
 
-def _handle_turn_head(session: dict, user_id: int, face_row) -> dict:
-    """转头检测：对比当前鼻位与基线，必须发生位移（照片做不到）。"""
-    _, _, w = int(face_row[0]), int(face_row[1]), int(face_row[2])
-    n_x = int(face_row[8])
-    nose_ratio = n_x / float(w or 1)  # 0.5=正脸, <0.5=偏右, >0.5=偏左
+def _handle_turn_action(session: dict, user_id: int, action: str, face_row) -> dict:
+    """方向转头检测：必须先正脸建立基线，再按随机指定方向产生位移。"""
+    step = session["step"]
+    state = _step_state(session, step, action)
+    if _action_step_expired(state):
+        _clean_session(user_id)
+        return {"passed": False, "all_done": False, "message": "动作超时，请刷新动作"}
 
-    baseline = session.get("turn_baseline")
+    x, w = float(face_row[0]), float(face_row[2])
+    n_x = float(face_row[8])
+    nose_ratio = (n_x - x) / float(w or 1)
+
+    baseline = state.get("baseline")
     if baseline is None:
-        session["turn_baseline"] = nose_ratio
-        return {"passed": False, "message": "请左右转头"}
+        if not 0.42 <= nose_ratio <= 0.58:
+            return {"passed": False, "all_done": False, "message": "请先正对摄像头"}
+        state["baseline"] = nose_ratio
+        msg = "请向左转头" if action in ("turn_left", "turn_head") else "请向右转头"
+        return {"passed": False, "all_done": False, "message": msg}
 
-    if abs(nose_ratio - baseline) > 0.10:
-        session["step"] += 1
-        session["turn_baseline"] = None
-        all_done = session["step"] >= len(session["actions"])
-        if all_done:
-            _clean_session(user_id)
+    can_try, try_msg = _register_action_attempt(user_id, state)
+    if not can_try:
+        return {"passed": False, "all_done": False, "message": try_msg}
+
+    delta = nose_ratio - float(baseline)
+    if abs(nose_ratio - 0.5) < abs(float(baseline) - 0.5):
+        state["baseline"] = nose_ratio
+
+    passed = False
+    msg = "请向左转头"
+    if action == "turn_left":
+        passed = delta > 0.09 and nose_ratio > 0.55
+    elif action == "turn_right":
+        msg = "请向右转头"
+        passed = delta < -0.09 and nose_ratio < 0.45
+    else:
+        msg = "请左右转头"
+        passed = abs(delta) > 0.10
+
+    if passed:
+        all_done = _advance_action_step(session)
         return {"passed": True, "message": "转头通过", "all_done": all_done}
 
-    return {"passed": False, "message": "请左右转头"}
+    return {"passed": False, "all_done": False, "message": msg}
+
+
+def _handle_expression_action(
+    session: dict,
+    user_id: int,
+    action: str,
+    image,
+    face_row,
+) -> dict:
+    """表情动作检测：先记录自然基线，再要求从基线变化到目标动作。"""
+    step = session["step"]
+    state = _step_state(session, step, action)
+    if _action_step_expired(state):
+        _clean_session(user_id)
+        return {"passed": False, "all_done": False, "message": "动作超时，请刷新动作"}
+
+    metrics = liveness_service.action_metrics(image, face_row)
+    mouth_open = float(metrics["mouth_open"])
+    smile = float(metrics["smile"])
+
+    if state.get("baseline") is None:
+        state["baseline"] = metrics
+        state["min_mouth_open"] = mouth_open
+        state["min_smile"] = smile
+        msg = "请微笑" if action == "smile" else "请张嘴"
+        return {"passed": False, "all_done": False, "message": msg}
+
+    can_try, try_msg = _register_action_attempt(user_id, state)
+    if not can_try:
+        return {"passed": False, "all_done": False, "message": try_msg}
+
+    state["min_mouth_open"] = min(float(state.get("min_mouth_open", 1.0)), mouth_open)
+    state["min_smile"] = min(float(state.get("min_smile", 1.0)), smile)
+
+    if action == "open_mouth":
+        baseline = float(state["min_mouth_open"])
+        if mouth_open >= max(0.55, baseline + 0.28):
+            all_done = _advance_action_step(session)
+            return {"passed": True, "message": "张嘴通过", "all_done": all_done}
+        if baseline > 0.35:
+            return {"passed": False, "all_done": False, "message": "请先闭嘴保持自然"}
+        return {"passed": False, "all_done": False, "message": "请张嘴"}
+
+    if action == "smile":
+        if smile >= 1.0 and float(state["min_smile"]) < 0.5:
+            all_done = _advance_action_step(session)
+            return {"passed": True, "message": "微笑通过", "all_done": all_done}
+        if float(state["min_smile"]) >= 0.5:
+            return {"passed": False, "all_done": False, "message": "请先保持自然表情"}
+        return {"passed": False, "all_done": False, "message": "请微笑"}
+
+    return {"passed": False, "all_done": False, "message": f"未知动作：{action}"}
 
 
 async def _verify_action_fallback(challenge_action: str, file: UploadFile) -> dict:
     """无会话时的降级单次验证（兼容旧前端 / session 过期）。"""
-    image = await read_image(file)
-    face_rows = face_service.detect_sface_rows(image)
-    if not face_rows:
-        haar_faces = face_service.detect_faces(image, allow_fallback=False)
-        if not haar_faces:
-            return {"passed": False, "message": "未检测到人脸"}
-        return {"passed": True, "message": "无法验证动作"}
-
-    largest = max(face_rows, key=lambda r: float(r[2] * r[3]))
-    passed, msg = liveness_service.verify_action(image, challenge_action, largest)
-    # 降级模式下单次验证通过即 all_done
-    return {"passed": passed, "message": msg, "all_done": passed}
+    return {"passed": False, "all_done": False, "message": "活体会话已过期，请刷新动作"}
 
 
 @router.get("/liveness-challenge")
@@ -337,11 +507,17 @@ def liveness_challenge(user: User = Depends(get_current_user)):
     _verify_sessions[user.id] = {
         "actions": selected,
         "step": 0,
-        "turn_baseline": None,
-        "expires_at": time() + 120,
+        "action_state": {},
+        "verified": False,
+        "verified_at": None,
+        "expires_at": time() + LIVENESS_SESSION_SECONDS,
     }
 
-    return {"enabled": True, "actions": selected, "expires_in": 60}
+    return {
+        "enabled": True,
+        "actions": selected,
+        "expires_in": LIVENESS_SESSION_SECONDS,
+    }
 
 
 @router.get("/liveness-settings")
@@ -431,7 +607,9 @@ def export_records(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    stream = build_attendance_workbook(_query_records(db, user, keyword, status, course_name).all())
+    stream = build_attendance_workbook(
+        _query_records(db, user, keyword, status, course_name).all()
+    )
     filename = f"attendance-{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(
@@ -472,7 +650,11 @@ class _BatchDeleteRequest(BaseModel):
 @router.post("/records/batch-delete", dependencies=[Depends(require_teacher)])
 def batch_delete_records(payload: _BatchDeleteRequest, db: Session = Depends(get_db)):
     """批量删除考勤记录及对应的签到照片和情绪记录。"""
-    records = db.query(AttendanceRecord).filter(AttendanceRecord.id.in_(payload.record_ids)).all()
+    records = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.id.in_(payload.record_ids))
+        .all()
+    )
     for record in records:
         if record.photo_path and not record.photo_path.startswith("group_photos/"):
             try:

@@ -190,10 +190,14 @@ const manualPromptVisible = computed(() => (
   && Boolean(currentChallengeText.value)
 ))
 const AUTO_CAPTURE_INTERVAL_MS = 500
+const ACTION_BASELINE_DELAY_MS = 950
+const MAX_ACTION_CAPTURE_ATTEMPTS = 2
 const ACTION_PROMPT_MAP = {
-  smile: '请微笑',
-  turn_head: '请左右转头',
-  open_mouth: '请张嘴',
+  smile: '先自然，再微笑',
+  turn_head: '先正脸，再转头',
+  turn_left: '先正脸，再向左转头',
+  turn_right: '先正脸，再向右转头',
+  open_mouth: '先闭嘴，再张嘴',
 }
 
 let cameraStream = null
@@ -339,6 +343,16 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function captureFrameBlob(video, quality = 0.95) {
+  const cvs = document.createElement('canvas')
+  cvs.width = video.videoWidth
+  cvs.height = video.videoHeight
+  cvs.getContext('2d').drawImage(video, 0, 0)
+  return new Promise((resolve) => {
+    cvs.toBlob(resolve, 'image/jpeg', quality)
+  })
+}
+
 async function refreshChallengeAfterCheckIn() {
   if (!livenessEnabled.value) return
   try {
@@ -357,33 +371,52 @@ async function captureAndSubmit() {
 
   loading.value = true
 
-  // Phase 1: 多步骤动作验证（与自动捕捉一致）
+  // Phase 1: 多步骤动作验证。每步只做有限采样，避免自动扫描视频帧命中。
   if (livenessEnabled.value && challengeActions.value.length > 0) {
     statusStep.value = 2
     while (challengeStep.value < challengeActions.value.length) {
       const action = challengeActions.value[challengeStep.value]
-      const cvs = document.createElement('canvas')
-      cvs.width = video.videoWidth
-      cvs.height = video.videoHeight
-      cvs.getContext('2d').drawImage(video, 0, 0)
-
-      const blob = await new Promise((resolve) => {
-        cvs.toBlob(resolve, 'image/jpeg', 0.95)
-      })
-      if (!blob) break
+      const baselineBlob = await captureFrameBlob(video)
+      if (!baselineBlob) break
 
       try {
-        const verifyRes = await attendanceApi.verifyAction(blob, action.code)
-        if (verifyRes.data.passed) {
-          completedActions.value.push(action.code)
-          challengeStep.value++
-        }
+        await attendanceApi.verifyAction(baselineBlob, action.code)
       } catch {
-        // 忽略错误，继续下一帧检测
+        ElMessage.warning('基线采集失败，请重新开始')
+        loading.value = false
+        return
       }
 
-      if (challengeStep.value < challengeActions.value.length) {
-        await new Promise((r) => setTimeout(r, 300))
+      await wait(ACTION_BASELINE_DELAY_MS)
+
+      let passed = false
+      for (let attempt = 0; attempt < MAX_ACTION_CAPTURE_ATTEMPTS; attempt++) {
+        const actionBlob = await captureFrameBlob(video)
+        if (!actionBlob) break
+        try {
+          const verifyRes = await attendanceApi.verifyAction(actionBlob, action.code)
+          if (verifyRes.data.passed) {
+            passed = true
+            break
+          }
+        } catch {
+          // 失败后进入下一次有限尝试
+        }
+        if (attempt + 1 < MAX_ACTION_CAPTURE_ATTEMPTS) {
+          await wait(650)
+        }
+      }
+
+      if (passed) {
+        if (!completedActions.value.includes(action.code)) {
+          completedActions.value.push(action.code)
+        }
+        challengeStep.value++
+      } else {
+        ElMessage.warning('活体动作未完成，请按提示重新开始')
+        await loadChallenge()
+        loading.value = false
+        return
       }
     }
   }
@@ -428,6 +461,11 @@ async function saveLiveness(value) {
 }
 
 async function toggleContinuousCapture() {
+  if (!continuousMode.value && livenessEnabled.value) {
+    ElMessage.warning('活体检测开启时请使用手动捕捉')
+    return
+  }
+
   if (continuousMode.value) {
     continuousMode.value = false
     if (continuousTimer) {

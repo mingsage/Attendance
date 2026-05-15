@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+from threading import Lock
 
 # 必须在任何 Keras/DeepFace 导入前设置后端
 os.environ["KERAS_BACKEND"] = "tensorflow"
@@ -9,10 +11,11 @@ from skimage.feature import local_binary_pattern
 
 
 class LivenessService:
-    """综合活体检测：融合传统图像特征与 DeepFace 深度学习反欺骗。
+    """综合活体检测：融合传统图像特征与轻量反欺骗模型。
 
     多维度检测：
-    - MiniFASNet 反欺骗模型（DeepFace 提供的深度学习反欺骗）
+    - MiniFASNet-V2 ONNX 反欺骗模型：识别 live / print / replay
+    - DeepFace 反欺骗模型（可选兜底）
     - 频域 FFT 分析：真实人脸具有自然的 1/f 频谱衰减
     - LBP 纹理分析：翻拍照片／屏幕呈现周期性重复纹理
     - 色彩多样性：打印照片色彩饱和度不足且缺乏变化
@@ -21,17 +24,104 @@ class LivenessService:
 
     def __init__(self) -> None:
         self._deepface = None
-        self.smile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_smile.xml")
-        try:
-            from deepface import DeepFace
+        self._minifasnet = None
+        self._minifasnet_lock = Lock()
+        self.minifasnet_model = (
+            Path(__file__).resolve().parents[2] / "models" / "minifasnet_v2.onnx"
+        )
+        self.smile_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_smile.xml"
+        )
+        if self.minifasnet_model.exists():
+            try:
+                self._minifasnet = cv2.dnn.readNetFromONNX(str(self.minifasnet_model))
+            except Exception:
+                self._minifasnet = None
+        if self._minifasnet is None:
+            try:
+                from deepface import DeepFace
 
-            self._deepface = DeepFace
-        except ImportError:
-            pass
+                self._deepface = DeepFace
+            except ImportError:
+                pass
 
     # ------------------------------------------------------------------
     #  深度学习反欺骗
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _softmax(values: np.ndarray) -> np.ndarray:
+        values = values.astype(np.float32)
+        values = values - np.max(values)
+        exp = np.exp(values)
+        return exp / (np.sum(exp) + 1e-6)
+
+    @staticmethod
+    def _scaled_face_crop(
+        image: np.ndarray,
+        face_box: tuple[int, int, int, int] | None,
+        scale: float = 2.7,
+        size: int = 80,
+    ) -> np.ndarray | None:
+        """按 MiniFASNet 训练方式，从人脸框中心扩大 2.7 倍裁剪 BGR 图像。"""
+        ih, iw = image.shape[:2]
+        if face_box is None:
+            side = int(min(iw, ih) * 0.72)
+            x = (iw - side) // 2
+            y = (ih - side) // 2
+            w = h = side
+        else:
+            x, y, w, h = face_box
+
+        if w <= 0 or h <= 0:
+            return None
+
+        cx = float(x) + float(w) / 2.0
+        cy = float(y) + float(h) / 2.0
+        side = max(float(w), float(h)) * scale
+        x1 = max(int(round(cx - side / 2.0)), 0)
+        y1 = max(int(round(cy - side / 2.0)), 0)
+        x2 = min(int(round(cx + side / 2.0)), iw)
+        y2 = min(int(round(cy + side / 2.0)), ih)
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        crop = image[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+        return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR)
+
+    def _minifasnet_spoof_scores(
+        self,
+        image: np.ndarray,
+        face_box: tuple[int, int, int, int] | None = None,
+    ) -> tuple[float, float, float] | None:
+        """MiniFASNet-V2 ONNX 推理，返回 live / print_attack / replay_attack 概率。"""
+        if self._minifasnet is None:
+            return None
+
+        crop = self._scaled_face_crop(image, face_box)
+        if crop is None:
+            return None
+
+        blob = crop.astype(np.float32) / 255.0
+        blob = np.transpose(blob, (2, 0, 1))[np.newaxis, ...]
+        blob = np.ascontiguousarray(blob, dtype=np.float32)
+
+        try:
+            with self._minifasnet_lock:
+                self._minifasnet.setInput(blob)
+                raw = self._minifasnet.forward().reshape(-1)
+            if raw.size < 3:
+                return None
+            if np.all(raw >= 0.0) and abs(float(np.sum(raw[:3])) - 1.0) < 1e-3:
+                probs = raw[:3].astype(np.float32)
+            else:
+                probs = self._softmax(raw[:3])
+            return float(probs[0]), float(probs[1]), float(probs[2])
+        except Exception:
+            return None
 
     def _deepface_spoof_score(self, image: np.ndarray) -> float | None:
         """使用 DeepFace 集成的 MiniFASNet 反欺骗模型，返回 [0,1] 真实人脸得分。"""
@@ -159,7 +249,11 @@ class LivenessService:
     #  综合判断
     # ------------------------------------------------------------------
 
-    def analyze(self, image: np.ndarray) -> tuple[float, float, str]:
+    def analyze(
+        self,
+        image: np.ndarray,
+        face_box: tuple[int, int, int, int] | None = None,
+    ) -> tuple[float, float, str]:
         """执行多维度活体检测。
 
         Returns:
@@ -195,8 +289,43 @@ class LivenessService:
         # 7. DeepFace 反欺骗（深度学习）
         deepface_score = self._deepface_spoof_score(image)
 
+        # 8. MiniFASNet-V2 ONNX 反欺骗（live / print / replay）
+        minifasnet_scores = self._minifasnet_spoof_scores(image, face_box)
+        minifasnet_score = (
+            minifasnet_scores[0] if minifasnet_scores is not None else None
+        )
+
+        rule_score = (
+            0.20 * blur_score
+            + 0.10 * brightness_score
+            + 0.15 * texture_score
+            + 0.25 * freq_score
+            + 0.20 * lbp_score_val
+            + 0.10 * color_score
+        )
+
         # ── 综合评分 ──
-        if deepface_score is not None:
+        # MiniFASNet 对不同摄像头、曝光和裁剪很敏感。这里不让单帧模型“一票否决”
+        # 真人，而是只有模型极高置信为 spoof 且传统规则也偏低时才强拦截。
+        hard_model_fail = False
+        model_spoof_prob = 0.0
+        if minifasnet_score is not None:
+            live_prob, print_prob, replay_prob = minifasnet_scores
+            model_spoof_prob = max(print_prob, replay_prob)
+            if deepface_score is not None:
+                score = (
+                    0.35 * minifasnet_score + 0.15 * deepface_score + 0.50 * rule_score
+                )
+            else:
+                score = 0.35 * minifasnet_score + 0.65 * rule_score
+            score = max(score, rule_score)
+            threshold = 0.40
+            hard_model_fail = (
+                minifasnet_score < 0.08
+                and model_spoof_prob > 0.92
+                and rule_score < 0.35
+            )
+        elif deepface_score is not None:
             score = (
                 0.03 * blur_score
                 + 0.03 * brightness_score
@@ -208,26 +337,27 @@ class LivenessService:
             )
             threshold = 0.55
         else:
-            score = (
-                0.20 * blur_score
-                + 0.10 * brightness_score
-                + 0.15 * texture_score
-                + 0.25 * freq_score
-                + 0.20 * lbp_score_val
-                + 0.10 * color_score
-            )
+            score = rule_score
             threshold = 0.45
 
-        score = round(score, 3)
+        score = float(round(float(score), 3))
 
-        if score < threshold:
+        if score < threshold or hard_model_fail:
             detail = []
             if lap_var < 30:
                 detail.append("画面模糊")
             if brightness < 30 or brightness > 220:
                 detail.append("光照异常")
-            if edge_density < 0.02:
+            if edge_density < 0.008:
                 detail.append("缺乏纹理")
+            if minifasnet_scores is not None:
+                live_prob, print_prob, replay_prob = minifasnet_scores
+                if hard_model_fail and replay_prob >= 0.80 and replay_prob >= print_prob:
+                    detail.append("疑似视频重放")
+                elif hard_model_fail and print_prob >= 0.80:
+                    detail.append("疑似照片/屏幕翻拍")
+                elif live_prob < 0.15 and model_spoof_prob > 0.90:
+                    detail.append("疑似伪造人脸")
             if deepface_score is not None and deepface_score < 0.30:
                 detail.append("疑似照片/屏幕翻拍")
             msg = f"活体检测失败：{'、'.join(detail) or f'综合得分过低（{score}）'}"
@@ -239,7 +369,20 @@ class LivenessService:
     #  动作验证（配合挑战动作强制执行）
     # ------------------------------------------------------------------
 
-    def verify_action(self, image: np.ndarray, action: str, face_row: np.ndarray) -> tuple[bool, str]:
+    def action_metrics(self, image: np.ndarray, face_row: np.ndarray) -> dict[str, float]:
+        """提取动作验证用的连续指标，供有状态挑战判断“从基线到动作”的变化。"""
+        x, w = float(face_row[0]), float(face_row[2])
+        n_x = float(face_row[8])
+        nose_ratio = (n_x - x) / float(w or 1)
+        return {
+            "nose_ratio": nose_ratio,
+            "mouth_open": self._mouth_open_score(image, face_row),
+            "smile": self._smile_score(image, face_row),
+        }
+
+    def verify_action(
+        self, image: np.ndarray, action: str, face_row: np.ndarray
+    ) -> tuple[bool, str]:
         """验证用户是否完成了指定挑战动作。
 
         Args:
@@ -253,7 +396,12 @@ class LivenessService:
         if action in ("", "none", "blink"):
             return True, ""
 
-        x, y, w, h = float(face_row[0]), float(face_row[1]), float(face_row[2]), float(face_row[3])
+        x, y, w, h = (
+            float(face_row[0]),
+            float(face_row[1]),
+            float(face_row[2]),
+            float(face_row[3]),
+        )
         n_x, n_y = float(face_row[8]), float(face_row[9])
         rc_x, rc_y = float(face_row[10]), float(face_row[11])
         lc_x, lc_y = float(face_row[12]), float(face_row[13])
@@ -274,8 +422,7 @@ class LivenessService:
 
         return False, f"未知动作：{action}"
 
-    def _check_smile(self, image: np.ndarray, face_row: np.ndarray) -> tuple[bool, str]:
-        """使用 Haar smile 级联分类器在嘴部 ROI 检测微笑。"""
+    def _mouth_roi(self, image: np.ndarray, face_row: np.ndarray) -> np.ndarray | None:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         ih, iw = gray.shape
 
@@ -292,65 +439,63 @@ class LivenessService:
         mouth_right = min(max(lc_x, rc_x) + int(face_w * 0.10), iw)
 
         if mouth_bottom <= mouth_top or mouth_right <= mouth_left:
-            return False, "无法定位嘴部区域"
+            return None
 
         mouth_roi = gray[mouth_top:mouth_bottom, mouth_left:mouth_right]
         if mouth_roi.size == 0:
-            return False, "嘴部区域为空"
+            return None
+        return mouth_roi
+
+    def _smile_score(self, image: np.ndarray, face_row: np.ndarray) -> float:
+        """微笑检测得分：Haar 检出时为 1，否则为 0。"""
+        mouth_roi = self._mouth_roi(image, face_row)
+        if mouth_roi is None:
+            return 0.0
 
         smiles = self.smile_cascade.detectMultiScale(
             mouth_roi, scaleFactor=1.5, minNeighbors=8, minSize=(20, 20)
         )
-        if len(smiles) > 0:
+        return 1.0 if len(smiles) > 0 else 0.0
+
+    def _check_smile(self, image: np.ndarray, face_row: np.ndarray) -> tuple[bool, str]:
+        """使用 Haar smile 级联分类器在嘴部 ROI 检测微笑。"""
+        if self._mouth_roi(image, face_row) is None:
+            return False, "无法定位嘴部区域"
+        if self._smile_score(image, face_row) >= 1.0:
             return True, ""
         return False, "请微笑"
 
-    def _check_mouth_open(self, image: np.ndarray, face_row: np.ndarray) -> tuple[bool, str]:
-        """张嘴检测：基于嘴部 ROI 中间 vs 两侧的灰度反差判断。
-        张嘴时口腔内部比嘴唇/皮肤暗很多 → 中间区域显著暗于两侧。
-        相对比较，对光照不敏感。
-        """
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        ih, iw = gray.shape
+    def _mouth_open_score(self, image: np.ndarray, face_row: np.ndarray) -> float:
+        """张嘴连续得分：结合口腔暗区和边缘密度，范围约为 0~1。"""
+        mouth_roi = self._mouth_roi(image, face_row)
+        if mouth_roi is None:
+            return 0.0
 
-        rc_y = int(face_row[11])
-        lc_y = int(face_row[13])
-        n_y = int(face_row[9])
-        rc_x, lc_x = int(face_row[10]), int(face_row[12])
-        face_h = int(face_row[3])
-        face_w = int(face_row[2])
-
-        # 划定嘴部 ROI：鼻尖到嘴角下方 15%
-        mouth_top = max(n_y, 0)
-        mouth_bottom = min(max(rc_y, lc_y) + int(face_h * 0.15), ih)
-        mouth_left = max(min(lc_x, rc_x) - int(face_w * 0.10), 0)
-        mouth_right = min(max(lc_x, rc_x) + int(face_w * 0.10), iw)
-
-        if mouth_bottom <= mouth_top or mouth_right <= mouth_left:
-            return False, "无法定位嘴部区域"
-
-        mouth_roi = gray[mouth_top:mouth_bottom, mouth_left:mouth_right]
-        if mouth_roi.size == 0:
-            return False, "嘴部区域为空"
-
-        # 方法 1（主要）：中间 1/3 是否比两侧都暗（张嘴时口腔暗区）
         h, w = mouth_roi.shape
-        dark_center = False
+        dark_score = 0.0
         if w >= 6:
             left = float(np.mean(mouth_roi[:, : w // 3]))
             center = float(np.mean(mouth_roi[:, w // 3 : 2 * w // 3]))
             right = float(np.mean(mouth_roi[:, 2 * w // 3 :]))
-            # 中间至少比左和右都暗 12%
-            if center < left * 0.88 and center < right * 0.88:
-                dark_center = True
+            side_mean = max((left + right) / 2.0, 1.0)
+            contrast = max((side_mean - center) / side_mean, 0.0)
+            dark_score = min(contrast / 0.20, 1.0)
 
-        if dark_center:
-            return True, ""
-
-        # 方法 2（备用）：水平边缘密度（牙齿产生强水平边缘）
         edges = cv2.Canny(mouth_roi, 50, 150)
-        h_edge_density = float(np.mean(edges > 0))
-        if h_edge_density > 0.18:
+        edge_density = float(np.mean(edges > 0))
+        edge_score = min(edge_density / 0.18, 1.0)
+        return max(dark_score, edge_score)
+
+    def _check_mouth_open(
+        self, image: np.ndarray, face_row: np.ndarray
+    ) -> tuple[bool, str]:
+        """张嘴检测：基于嘴部 ROI 中间 vs 两侧的灰度反差判断。
+        张嘴时口腔内部比嘴唇/皮肤暗很多 → 中间区域显著暗于两侧。
+        相对比较，对光照不敏感。
+        """
+        if self._mouth_roi(image, face_row) is None:
+            return False, "无法定位嘴部区域"
+        if self._mouth_open_score(image, face_row) >= 0.55:
             return True, ""
 
         return False, "请张嘴"
