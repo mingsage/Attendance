@@ -55,7 +55,7 @@ async def check_in(
     challenge_action: str = Query("", description="活体挑战动作：smile/turn_left/turn_right/open_mouth"),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _: User = Depends(require_teacher),
+    current_user: User = Depends(require_teacher),
 ):
     image = await read_image(file)
     faces = face_service.detect_faces(image, allow_fallback=False)
@@ -81,15 +81,25 @@ async def check_in(
         action_ok = True
         action_msg = ""
         if challenge_action:
-            face_rows = face_service.detect_sface_rows(image)
-            if face_rows:
-                largest = max(face_rows, key=lambda r: float(r[2] * r[3]))
-                action_ok, action_msg = liveness_service.verify_action(
-                    image, challenge_action, largest
-                )
-            else:
+            session = _verify_sessions.get(current_user.id if current_user else None)
+            if not session or session["expires_at"] < time():
                 action_ok = False
-                action_msg = "无法检测人脸关键点，请确保正对摄像头"
+                action_msg = "请先刷新活体动作后按顺序完成"
+            elif not session.get("completed"):
+                remaining = [a["text"] for a in session["actions"][session["step"]:]]
+                action_ok = False
+                action_msg = f"请按顺序完成全部动作：{' → '.join(remaining)}"
+            else:
+                face_rows = face_service.detect_sface_rows(image)
+                if face_rows:
+                    largest = max(face_rows, key=lambda r: float(r[2] * r[3]))
+                    action_ok, action_msg = liveness_service.verify_action(
+                        image, challenge_action, largest
+                    )
+                else:
+                    action_ok = False
+                    action_msg = "无法检测人脸关键点，请确保正对摄像头"
+                _clean_session(current_user.id)
 
         liveness_passed = anti_spoofing_ok and action_ok
 
@@ -252,12 +262,15 @@ async def verify_action(
     step = session["step"]
     actions = session["actions"]
     if step >= len(actions):
-        _clean_session(user.id)
+        session["completed"] = True
         return {"passed": True, "all_done": True, "message": "所有动作已完成"}
 
     expected = actions[step]["code"]
     if challenge_action != expected:
-        return {"passed": False, "message": f"请完成：{actions[step]['text']}"}
+        session["step"] = 0
+        session["turn_baseline"] = None
+        session["completed"] = False
+        return {"passed": False, "message": f"顺序错误，请重新开始：{actions[0]['text']}"}
 
     # ── 执行验证 ──
     image = await read_image(file)
@@ -279,7 +292,7 @@ async def verify_action(
         session["step"] = step + 1
         all_done = session["step"] >= len(actions)
         if all_done:
-            _clean_session(user.id)
+            session["completed"] = True
         label = {"smile": "微笑通过", "turn_head": "转头通过", "open_mouth": "张嘴通过"}
         return {"passed": True, "message": msg or label.get(challenge_action, "动作通过"), "all_done": all_done}
 
@@ -328,7 +341,7 @@ async def _verify_action_fallback(challenge_action: str, file: UploadFile) -> di
 def liveness_challenge(user: User = Depends(get_current_user)):
     """返回多个随机挑战动作，前端按 step 依次验证。"""
     if not LIVENESS_ENABLED:
-        _clean_session(user.id)
+        session["completed"] = True
         return {"enabled": False, "actions": [], "expires_in": 0}
 
     num = min(3, len(LIVENESS_ACTIONS))
