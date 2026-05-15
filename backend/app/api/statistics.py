@@ -251,6 +251,21 @@ def activity_export(
         if er.student_id not in emotion_map:
             emotion_map[er.student_id] = er.emotion_type
 
+    # 统计每人累计参与活动次数（按不重复活动名）
+    student_ids = {sid for *_, sid in rows}
+    activity_counts: dict[int, int] = {}
+    if student_ids:
+        count_rows = (
+            db.query(
+                ActivityParticipation.student_id,
+                func.count(func.distinct(ActivityParticipation.activity_name)),
+            )
+            .filter(ActivityParticipation.student_id.in_(student_ids))
+            .group_by(ActivityParticipation.student_id)
+            .all()
+        )
+        activity_counts = {sid: cnt for sid, cnt in count_rows}
+
     records = []
     for act_name, act_date, student_no, s_name, class_name, confidence, sid in rows:
         records.append({
@@ -261,6 +276,7 @@ def activity_export(
             "class_name": class_name,
             "confidence": round(confidence or 0, 4),
             "emotion": emotion_map.get(sid, ""),
+            "participation_count": activity_counts.get(sid, 0),
         })
 
     if not records:

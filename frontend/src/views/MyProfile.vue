@@ -326,6 +326,7 @@ onBeforeUnmount(() => {
 
 .account-form {
   max-width: 420px;
+  margin: 0 auto;
 }
 
 .face-preview-image {

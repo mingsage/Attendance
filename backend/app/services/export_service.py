@@ -141,7 +141,7 @@ def build_activity_workbook(records: list[dict]) -> BytesIO:
     ws = wb.active
     ws.title = "活动参与名单"
 
-    headers = ["活动名称", "日期", "学号", "姓名", "班级", "置信度", "情绪"]
+    headers = ["活动名称", "日期", "学号", "姓名", "班级", "置信度", "情绪", "累计活动次数"]
     ws.append(headers)
 
     for r in records:
@@ -153,9 +153,10 @@ def build_activity_workbook(records: list[dict]) -> BytesIO:
             r["class_name"],
             r["confidence"],
             r.get("emotion") or "",
+            r.get("participation_count", 0),
         ])
 
-    _style_header(ws, {1: 20, 2: 14, 3: 16, 4: 10, 5: 16, 6: 12, 7: 10})
+    _style_header(ws, {1: 20, 2: 14, 3: 16, 4: 10, 5: 16, 6: 12, 7: 10, 8: 14})
 
     stream = BytesIO()
     wb.save(stream)

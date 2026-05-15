@@ -21,6 +21,8 @@ class AttendanceOut(BaseModel):
     course_name: str
     message: str | None
     photo_url: str | None = None
+    session_num: int | None = None
+    session_count: int | None = None
     student: StudentOut | None = None
     activities: list[ActivityParticipationItem] = []
 

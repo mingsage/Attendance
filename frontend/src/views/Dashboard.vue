@@ -38,13 +38,8 @@
     <div class="section" style="margin-top: 16px">
       <h3 style="margin:0 0 12px;font-size:15px;font-weight:600">最近考勤记录</h3>
       <el-table :data="recentRecords" v-if="recentRecords.length" size="small" max-height="320" @row-click="showPhoto">
-        <el-table-column prop="timestamp" label="时间" width="170" />
-        <el-table-column label="学生">
-          <template #default="{ row }">
-            <span v-if="row.student" class="student-link">{{ row.student.name }}</span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
+        <el-table-column prop="timestamp" label="时间" width="270" />
+        <el-table-column prop="course_name" label="课程" width="250" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <span :class="['status-tag', row.status]" style="white-space: nowrap">
@@ -53,7 +48,18 @@
           </template>
         </el-table-column>
         <el-table-column prop="confidence" label="置信度" width="90" />
-        <el-table-column prop="course_name" label="课程" />
+        <el-table-column label="学号">
+          <template #default="{ row }">
+            <span v-if="row.student">{{ row.student.student_no }}</span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="学生">
+          <template #default="{ row }">
+            <span v-if="row.student" class="student-link">{{ row.student.name }}</span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
       </el-table>
       <el-empty v-else description="暂无考勤记录" :image-size="80" />
     </div>

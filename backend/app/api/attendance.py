@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from random import sample
 from time import time
 from zoneinfo import ZoneInfo
@@ -7,6 +7,7 @@ import cv2
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, require_teacher
@@ -132,19 +133,43 @@ async def check_in(
     if not liveness_passed:
         message = liveness_result_msg
 
-    record = AttendanceRecord(
-        student_id=matched_id,
-        timestamp=datetime.now(ZoneInfo("Asia/Shanghai")),
-        status="success" if success else "failed",
-        confidence=round(confidence, 3),
-        liveness_score=liveness_score,
-        emotion_type=emotion,
-        course_name=course_name,
-        message=message,
-    )
-    db.add(record)
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+
+    # 去重：同学生同课程的成功记录覆盖更新
+    existing = None
     if success and matched_id:
-        db.add(EmotionRecord(student_id=matched_id, emotion_type=emotion, confidence=emotion_confidence, source="attendance", timestamp=record.timestamp))
+        existing = db.query(AttendanceRecord).filter(
+            AttendanceRecord.student_id == matched_id,
+            AttendanceRecord.course_name == course_name,
+            AttendanceRecord.status == "success",
+            func.date(AttendanceRecord.timestamp) == date.today(),
+        ).order_by(AttendanceRecord.timestamp.desc()).first()
+
+    if existing:
+        existing.confidence = round(confidence, 3)
+        existing.liveness_score = liveness_score
+        existing.emotion_type = emotion
+        existing.timestamp = now
+        existing.message = "考勤已更新：" + message
+        record = existing
+    else:
+        record = AttendanceRecord(
+            student_id=matched_id,
+            timestamp=now,
+            status="success" if success else "failed",
+            confidence=round(confidence, 3),
+            liveness_score=liveness_score,
+            emotion_type=emotion,
+            course_name=course_name,
+            message=message,
+        )
+        db.add(record)
+        if success and matched_id:
+            db.add(EmotionRecord(
+                student_id=matched_id, emotion_type=emotion,
+                confidence=emotion_confidence, source="attendance",
+                timestamp=record.timestamp,
+            ))
     db.commit()
     db.refresh(record)
 
@@ -160,6 +185,26 @@ async def check_in(
         pass
 
     return CheckInResponse(success=success, message=message, record=record)
+
+
+@router.post("/detect")
+async def detect_faces(
+    file: UploadFile = File(...),
+    _: User = Depends(get_current_user),
+):
+    """轻量人脸检测：返回相对坐标 + 主脸标记，供前端视频实时画框。"""
+    image = await read_image(file)
+    faces = face_service.detect_faces(image, allow_fallback=False)
+    result = []
+    if faces:
+        h, w = image.shape[:2]
+        largest_idx = max(range(len(faces)), key=lambda i: faces[i][2] * faces[i][3])
+        for i, (x, y, fw, fh) in enumerate(faces):
+            result.append({
+                "bbox": [x / w, y / h, fw / w, fh / h],
+                "is_primary": i == largest_idx,
+            })
+    return {"faces": result}
 
 
 # ── 活体验证会话（内存状态） ──
@@ -345,6 +390,35 @@ def records(
     else:
         for r in records:
             r.activities = []
+
+    # 课次信息：每个课程按日期排序编号，统计每课次签到人数
+    courses = {r.course_name for r in records if r.course_name}
+    if courses:
+        course_dates = {}
+        for cn in courses:
+            dates = (
+                db.query(func.date(AttendanceRecord.timestamp))
+                .filter(AttendanceRecord.course_name == cn)
+                .distinct()
+                .order_by(func.date(AttendanceRecord.timestamp))
+                .all()
+            )
+            course_dates[cn] = [d[0] for d in dates]
+        for r in records:
+            if r.course_name and r.timestamp:
+                r_date = r.timestamp.strftime("%Y-%m-%d")
+                dates = course_dates.get(r.course_name, [])
+                if r_date in dates:
+                    r.session_num = dates.index(r_date) + 1
+                    r.session_count = (
+                        db.query(AttendanceRecord)
+                        .filter(
+                            AttendanceRecord.course_name == r.course_name,
+                            AttendanceRecord.status == "success",
+                            func.date(AttendanceRecord.timestamp) == r_date,
+                        )
+                        .count()
+                    )
 
     return records
 

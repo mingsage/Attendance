@@ -13,7 +13,7 @@
           <div class="upload-hint">支持 JPG / PNG 格式</div>
         </div>
         <div v-else class="preview-wrapper">
-          <img :src="previewUrl" class="preview-img" alt="合照预览" />
+          <FaceOverlay :src="previewUrl" :faces="overlayFaces" />
           <div class="preview-actions">
             <el-button size="small" @click="clearPreview">重新选择</el-button>
             <el-button size="small" type="primary" :loading="recognizing" @click="startRecognize">开始识别</el-button>
@@ -78,6 +78,11 @@
               <span style="white-space: nowrap">{{ EMOTION_MAP[row.emotion] || row.emotion }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="活动次数" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" type="info" effect="plain">{{ row.participation_count || 0 }} 次</el-tag>
+            </template>
+          </el-table-column>
         </el-table>
       </transition>
     </div>
@@ -90,6 +95,7 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import { groupPhotoApi, statisticsApi } from '../api/modules'
+import FaceOverlay from '../components/FaceOverlay.vue'
 import StudentDetail from '../components/StudentDetail.vue'
 
 const EMOTION_MAP = {
@@ -98,7 +104,9 @@ const EMOTION_MAP = {
   angry: '😠 Angry',
   surprised: '😮 Surprised',
   fearful: '😨 Fearful',
+  fear: '😨 Fearful',
   disgusted: '🤢 Disgusted',
+  disgust: '🤢 Disgusted',
   neutral: '😐 Neutral',
 }
 
@@ -120,6 +128,9 @@ const previewUrl = ref(null)
 const recognizing = ref(false)
 let currentFile = null
 
+// 人脸框标注
+const overlayFaces = ref([])
+
 function handleFileSelect(e) {
   const file = e.target?.files?.[0]
   if (!file) return
@@ -127,6 +138,7 @@ function handleFileSelect(e) {
   previewUrl.value = URL.createObjectURL(file)
   summary.value = null
   results.value = []
+  overlayFaces.value = []
   e.target.value = ''
 }
 
@@ -137,12 +149,14 @@ function handleDrop(e) {
   previewUrl.value = URL.createObjectURL(file)
   summary.value = null
   results.value = []
+  overlayFaces.value = []
 }
 
 function clearPreview() {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = null
   currentFile = null
+  overlayFaces.value = []
 }
 
 async function startRecognize() {
@@ -152,6 +166,7 @@ async function startRecognize() {
     const { data } = await groupPhotoApi.recognize(currentFile, activityName.value)
     summary.value = data
     results.value = data.recognized
+    overlayFaces.value = data.faces || []
     ElMessage.success(`识别完成：${data.recognized_count} 人`)
   } finally {
     recognizing.value = false
@@ -217,7 +232,7 @@ async function exportList() {
   gap: 12px;
 }
 
-.preview-img {
+:deep(.face-overlay-img) {
   max-width: 100%;
   max-height: 400px;
   border-radius: 8px;

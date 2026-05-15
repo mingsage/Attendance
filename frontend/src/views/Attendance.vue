@@ -17,14 +17,6 @@
     <div class="section camera-section">
       <div class="camera-wrapper">
         <video ref="videoRef" class="camera" autoplay muted playsinline @loadedmetadata="onVideoReady" />
-        <canvas ref="overlayRef" class="camera-overlay" v-show="cameraActive" />
-        <transition name="manual-prompt-fade">
-          <div v-if="manualPromptVisible" class="manual-action-prompt">
-            <el-icon><Timer /></el-icon>
-            <span>{{ currentChallengeText }}</span>
-          </div>
-        </transition>
-        <!-- 人脸引导框 -->
         <div v-if="cameraActive" class="face-guide">
           <svg viewBox="0 0 200 260" class="guide-svg">
             <ellipse cx="100" cy="130" rx="75" ry="95" fill="none"
@@ -36,7 +28,14 @@
             {{ faceDetected ? '人脸已检测' : '请将面部对准椭圆区域' }}
           </span>
         </div>
-        <div v-else class="camera-placeholder">
+        <canvas ref="overlayRef" class="camera-overlay" v-show="cameraActive" />
+        <transition name="manual-prompt-fade">
+          <div v-if="manualPromptVisible" class="manual-action-prompt">
+            <el-icon><Timer /></el-icon>
+            <span>{{ currentChallengeText }}</span>
+          </div>
+        </transition>
+        <div v-if="!cameraActive" class="camera-placeholder">
           <el-icon :size="48"><VideoCamera /></el-icon>
           <p>点击下方按钮开启摄像头</p>
         </div>
@@ -166,7 +165,6 @@ const result = ref(null)
 const statusStep = ref(0)
 const livenessEnabled = ref(false)
 const cameraActive = ref(false)
-const faceDetected = ref(false)
 const continuousMode = ref(false)
 const captureStatus = ref('')
 const statusType = ref('info')
@@ -174,6 +172,13 @@ const cooldownCount = ref(0)
 let continuousTimer = null
 const challengeActions = ref([])
 const challengeStep = ref(0)
+
+// 实时人脸检测
+const detectionFaces = ref([])
+const primaryRecognized = ref(false)
+const detecting = ref(false)
+let detectTimer = null
+const faceDetected = computed(() => detectionFaces.value.length > 0)
 const completedActions = ref([])
 const currentChallengeAction = computed(() => challengeActions.value[challengeStep.value] || null)
 const currentActionCode = computed(() => currentChallengeAction.value?.code || '')
@@ -192,7 +197,6 @@ const ACTION_PROMPT_MAP = {
 }
 
 let cameraStream = null
-let detectInterval = null
 
 const EMOTION_MAP = {
   happy: '😊 Happy',
@@ -200,7 +204,9 @@ const EMOTION_MAP = {
   angry: '😠 Angry',
   surprised: '😮 Surprised',
   fearful: '😨 Fearful',
+  fear: '😨 Fearful',
   disgusted: '🤢 Disgusted',
+  disgust: '🤢 Disgusted',
   neutral: '😐 Neutral',
 }
 
@@ -220,9 +226,9 @@ async function startCamera() {
   if (cameraStream) {
     cameraStream.getTracks().forEach((t) => t.stop())
     cameraStream = null
-    if (detectInterval) {
-      clearInterval(detectInterval)
-      detectInterval = null
+    if (detectTimer) {
+      clearInterval(detectTimer)
+      detectTimer = null
     }
   }
   try {
@@ -236,7 +242,8 @@ async function startCamera() {
     })
     videoRef.value.srcObject = cameraStream
     cameraActive.value = true
-    faceDetected.value = false
+    detectionFaces.value = []
+    primaryRecognized.value = false
     statusStep.value = 1
   } catch {
     ElMessage.error('摄像头启动失败，请检查浏览器权限')
@@ -244,38 +251,62 @@ async function startCamera() {
 }
 
 function onVideoReady() {
-  // 简单人脸检测模拟：基于运动检测或亮度来判断画面中是否有人
-  // 实际应用中可用更复杂的方法，此处用亮度变化简单判断
   startFaceDetection()
 }
 
 function startFaceDetection() {
-  if (detectInterval) clearInterval(detectInterval)
-  detectInterval = setInterval(() => {
+  if (detectTimer) clearInterval(detectTimer)
+  detectTimer = setInterval(async () => {
+    if (detecting.value) return
+    if (!cameraActive.value) return
     const video = videoRef.value
     if (!video?.videoWidth) return
-    // 取中心区域亮度方差判断是否有面部（非精确，仅用于引导提示）
-    const canvas = document.createElement('canvas')
-    canvas.width = 160
-    canvas.height = 120
-    const ctx = canvas.getContext('2d')
-    ctx.drawImage(video, 0, 0, 160, 120)
-    const imageData = ctx.getImageData(0, 0, 160, 120)
-    const pixels = imageData.data
-    let sum = 0
-    for (let i = 0; i < pixels.length; i += 4) {
-      sum += pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114
+
+    detecting.value = true
+    try {
+      const cap = document.createElement('canvas')
+      const scale = 320 / video.videoWidth
+      cap.width = 320
+      cap.height = Math.round(video.videoHeight * scale)
+      cap.getContext('2d').drawImage(video, 0, 0, cap.width, cap.height)
+      const blob = await new Promise((r) => cap.toBlob(r, 'image/jpeg', 0.7))
+      if (!blob) return
+      const { data } = await attendanceApi.detect(new File([blob], 'detect.jpg'))
+      detectionFaces.value = data.faces || []
+      drawFaceBoxes(detectionFaces.value)
+    } catch {
+      detectionFaces.value = []
+      drawFaceBoxes([])
+    } finally {
+      detecting.value = false
     }
-    const avg = sum / (pixels.length / 4)
-    // 计算中心区域方差（人脸通常有对比度）
-    let variance = 0
-    for (let i = 0; i < pixels.length; i += 4) {
-      const gray = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114
-      variance += (gray - avg) ** 2
-    }
-    variance /= pixels.length / 4
-    faceDetected.value = variance > 1500 && avg > 30 && avg < 230
-  }, 500)
+  }, 250)
+}
+
+function drawFaceBoxes(faces) {
+  const canvas = overlayRef.value
+  const video = videoRef.value
+  if (!canvas || !video) return
+
+  canvas.width = video.clientWidth
+  canvas.height = video.clientHeight
+  const ctx = canvas.getContext('2d')
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+  for (const f of faces) {
+    const [rx, ry, rw, rh] = f.bbox
+    const x = rx * canvas.width
+    const y = ry * canvas.height
+    const w = rw * canvas.width
+    const h = rh * canvas.height
+    const color = f.is_primary
+      ? (primaryRecognized.value ? '#10b981' : '#f59e0b')
+      : '#ef4444'
+
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2.5
+    ctx.strokeRect(x, y, w, h)
+  }
 }
 
 async function submit(file) {
@@ -287,8 +318,10 @@ async function submit(file) {
     result.value = data
     statusStep.value = 4
     if (data.success) {
+      primaryRecognized.value = true
       ElMessage.success(data.message)
     } else {
+      primaryRecognized.value = false
       ElMessage.error(data.message)
     }
     await refreshChallengeAfterCheckIn()
@@ -376,6 +409,7 @@ async function loadChallenge() {
   challengeActions.value = data.actions || []
   challengeStep.value = 0
   completedActions.value = []
+  primaryRecognized.value = false
   livenessEnabled.value = Boolean(data.enabled)
   statusStep.value = Math.max(statusStep.value, 1)
 }
@@ -402,6 +436,7 @@ async function toggleContinuousCapture() {
     }
     captureStatus.value = ''
     cooldownCount.value = 0
+    primaryRecognized.value = false
     statusStep.value = 1
     return
   }
@@ -492,9 +527,11 @@ function startContinuousLoop() {
         statusStep.value = 4
 
         if (data.success) {
+          primaryRecognized.value = true
           captureStatus.value = `签到成功：${data.record?.student?.name || '✓'}`
           statusType.value = 'success'
         } else {
+          primaryRecognized.value = false
           captureStatus.value = data.message?.length > 30 ? '签到失败' : data.message
           statusType.value = 'error'
         }
@@ -536,7 +573,7 @@ onMounted(loadLivenessSettings)
 
 onBeforeUnmount(() => {
   if (continuousTimer) clearInterval(continuousTimer)
-  if (detectInterval) clearInterval(detectInterval)
+  if (detectTimer) clearInterval(detectTimer)
   cameraStream?.getTracks().forEach((t) => t.stop())
 })
 </script>
@@ -635,7 +672,6 @@ onBeforeUnmount(() => {
   transform: translateX(-50%) translateY(-8px);
 }
 
-/* 人脸引导框 */
 .face-guide {
   position: absolute;
   inset: 0;

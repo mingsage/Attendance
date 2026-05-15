@@ -446,8 +446,10 @@ async def batch_upload_faces(
                 }
             )
         except HTTPException as exc:
+            db.rollback()
             failed.append({"filename": file.filename, "reason": exc.detail})
         except Exception as exc:  # noqa: BLE001 - 单张照片失败不应中断整批导入。
+            db.rollback()
             failed.append({"filename": file.filename, "reason": str(exc)})
 
     db.commit()

@@ -54,7 +54,12 @@ export const attendanceApi = {
   records: (params) => http.get('/attendance/records', { params }),
   deleteRecord: (id) => http.delete(`/attendance/records/${id}`),
   batchDeleteRecords: (recordIds) => http.post('/attendance/records/batch-delete', { record_ids: recordIds }),
-  export: (params) => http.get('/attendance/export', { params, responseType: 'blob' })
+  export: (params) => http.get('/attendance/export', { params, responseType: 'blob' }),
+  detect: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return http.post('/attendance/detect', form)
+  },
 }
 
 export const groupPhotoApi = {

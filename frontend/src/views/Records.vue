@@ -79,8 +79,16 @@
       <el-table-column prop="timestamp" label="时间" width="170" sortable="custom">
         <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
       </el-table-column>
-      <el-table-column prop="course_name" label="课程" min-width="100" />
-      <el-table-column label="学生" width="160">
+      <el-table-column label="课程" min-width="160">
+        <template #default="{ row }">
+          {{ row.course_name }}
+          <span v-if="row.session_num" style="font-size:11px;color:#9ca3af">
+            · 课次{{ row.session_num }} ({{ formatSessionDate(row.timestamp) }})
+            <template v-if="row.session_count"> · {{ row.session_count }}人</template>
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="学生" width="300">
         <template #default="{ row }">
           <span v-if="row.student" class="student-link">
             <span style="font-weight: 500">{{ row.student.name }}</span>
@@ -96,7 +104,7 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="confidence" label="置信度" width="95" sortable="custom" align="center">
+      <el-table-column prop="confidence" label="置信度" width="115" sortable="custom" align="center">
         <template #default="{ row }">
           <span v-if="row.confidence !== null" :style="{ color: row.confidence >= 0.58 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">
             {{ (row.confidence * 100).toFixed(1) }}%
@@ -162,7 +170,9 @@ const EMOTION_MAP = {
   angry: '😠 Angry',
   surprised: '😮 Surprised',
   fearful: '😨 Fearful',
+  fear: '😨 Fearful',
   disgusted: '🤢 Disgusted',
+  disgust: '🤢 Disgusted',
   neutral: '😐 Neutral',
 }
 
@@ -202,6 +212,12 @@ function formatTime(ts) {
   const d = new Date(ts)
   const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function formatSessionDate(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
 function onSort({ prop, order }) {

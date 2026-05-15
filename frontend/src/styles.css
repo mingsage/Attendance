@@ -41,7 +41,7 @@ body {
 /* 页面容器 */
 .page {
   padding: 20px;
-  max-width: 1440px;
+  width: 100%;
 }
 
 /* 顶部工具栏 */

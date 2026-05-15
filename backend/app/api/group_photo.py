@@ -40,26 +40,31 @@ async def group_recognize(
         raise HTTPException(status_code=400, detail="合照中未检测到人脸")
 
     recognized = []
+    faces_data = []  # 所有人脸框，供前端在原图上标注
     seen_student_ids: set[int] = set()
 
     for box in faces:
         feature = face_service.extract_feature_by_box(image, box)
         if feature is None:
+            faces_data.append({"bbox": list(map(int, box)), "recognized": False, "student_no": None, "name": None})
             continue
 
         # 计算与所有底库的余弦相似度
         scores = np.array([float(np.dot(feature, enc)) for enc in known_encos])
         if np.any(np.isnan(scores)):
+            faces_data.append({"bbox": list(map(int, box)), "recognized": False, "student_no": None, "name": None})
             continue
         best_idx = int(np.argmax(scores))
         best_cos = float(scores[best_idx])
         best_score = (best_cos + 1.0) / 2.0  # 映射到 [0, 1]
 
         if best_score < 0.55:
+            faces_data.append({"bbox": list(map(int, box)), "recognized": False, "student_no": None, "name": None})
             continue
 
         s = students_db[best_idx]
         if s.id in seen_student_ids:
+            faces_data.append({"bbox": list(map(int, box)), "recognized": False, "student_no": s.student_no, "name": s.name})
             continue
         seen_student_ids.add(s.id)
 
@@ -86,6 +91,14 @@ async def group_recognize(
             )
         )
 
+        faces_data.append(
+            {
+                "bbox": list(map(int, box)),
+                "recognized": True,
+                "student_no": s.student_no,
+                "name": s.name,
+            }
+        )
         recognized.append(
             {
                 "student_id": s.id,
@@ -99,10 +112,29 @@ async def group_recognize(
 
     db.commit()
 
+    # 统计每个已识别学生累计参与活动次数（含本次）
+    seen_for_count: set[int] = {r["student_id"] for r in recognized if r.get("student_id")}
+    counts: dict[int, int] = {}
+    if seen_for_count:
+        from sqlalchemy import func as sa_func
+        rows = (
+            db.query(
+                ActivityParticipation.student_id,
+                sa_func.count(sa_func.distinct(ActivityParticipation.activity_name)),
+            )
+            .filter(ActivityParticipation.student_id.in_(seen_for_count))
+            .group_by(ActivityParticipation.student_id)
+            .all()
+        )
+        counts = {sid: cnt for sid, cnt in rows}
+    for r in recognized:
+        r["participation_count"] = counts.get(r["student_id"], 0)
+
     return {
         "status": "success",
         "activity_name": activity_name,
-        "faces_detected": len(faces),
+        "face_count": len(faces),
         "recognized_count": len(recognized),
         "recognized": recognized,
+        "faces": faces_data,
     }

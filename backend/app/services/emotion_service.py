@@ -50,7 +50,9 @@ class EmotionService:
                 result = result[0]
             emotion = result["dominant_emotion"]
             confidence = round(result["emotion"][emotion] / 100.0, 3)
-            return emotion, confidence
+            # DeepFace 返回 fear/disgust，归一化到 fearful/disgusted
+            _normalize = {"fear": "fearful", "disgust": "disgusted"}
+            return _normalize.get(emotion, emotion), confidence
         except Exception:
             pass
 

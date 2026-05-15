@@ -17,7 +17,11 @@
             <span style="white-space: nowrap">{{ EMOTION_MAP[row.emotion_type] || row.emotion_type }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="confidence" label="置信度" />
+        <el-table-column prop="confidence" label="置信度" width="130">
+          <template #default="{ row }">
+            {{ row.confidence?.toFixed(3) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="source" label="来源" />
       </el-table>
     </div>
@@ -72,7 +76,9 @@ const EMOTION_MAP = {
   angry: '😠 Angry',
   surprised: '😮 Surprised',
   fearful: '😨 Fearful',
+  fear: '😨 Fearful',
   disgusted: '🤢 Disgusted',
+  disgust: '🤢 Disgusted',
   neutral: '😐 Neutral',
 }
 
