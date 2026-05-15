@@ -1,5 +1,10 @@
 from datetime import date, datetime
+<<<<<<< Updated upstream
 from random import choice
+=======
+import random as _random
+from time import time
+>>>>>>> Stashed changes
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -69,6 +74,7 @@ async def detect_faces(
     return {"faces": [{"bbox": f["bbox"]} for f in faces], "count": len(faces)}
 
 
+<<<<<<< Updated upstream
 @router.post("/recognize", response_model=RecognizeResponse)
 async def recognize(
     file: UploadFile = File(...),
@@ -114,6 +120,135 @@ def db_get_student(student_id: int):
         return db.get(Student, student_id)
     finally:
         db.close()
+=======
+# ── 活体验证会话（内存状态） ──
+_verify_sessions: dict[int, dict] = {}
+"""
+{
+  user_id: {
+    "actions": [{"code": "smile", "text": "..."}, ...],
+    "step": 0,
+    "turn_baseline": None | float,
+    "completed": False,
+    "expires_at": float,
+    "last_step_at": float | None,
+    "action_hold_count": 0,
+  }
+}
+"""
+
+
+def _clean_session(user_id: int) -> None:
+    _verify_sessions.pop(user_id, None)
+
+
+@router.post("/verify-action")
+async def verify_action(
+    challenge_action: str = Query(..., description="当前挑战动作 code"),
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """有状态动作验证：支持多动作串行 + 转头基线对比防照片欺骗。
+
+    返回格式：
+      {"passed": true/false, "message": "...", "all_done": true/false}
+    前端按 step 依次验证，all_done=true 后调 check-in。
+    """
+    if not challenge_action or not LIVENESS_ENABLED:
+        return {"passed": True, "all_done": True, "message": "无需验证"}
+
+    # 获取会话
+    session = _verify_sessions.get(user.id)
+    if not session or session["expires_at"] < time():
+        # 会话过期或缺失 → 走无状态单次验证（兼容旧流程）
+        return await _verify_action_fallback(challenge_action, file)
+
+    session["expires_at"] = time() + 120  # 续期
+
+    # 检查当前 step 是否匹配客户端的请求
+    step = session["step"]
+    actions = session["actions"]
+    if step >= len(actions):
+        session["completed"] = True
+        return {"passed": True, "all_done": True, "message": "所有动作已完成"}
+
+    expected = actions[step]["code"]
+    if challenge_action != expected:
+        session["step"] = 0
+        session["turn_baseline"] = None
+        session["action_hold_count"] = 0
+        session["completed"] = False
+        return {"passed": False, "message": f"顺序错误，请重新开始：{actions[0]['text']}", "stage": "error"}
+
+    # ── 动作间冷却（1.5 秒） ──
+    now = time()
+    last = session.get("last_step_at")
+    cooldown = 1.5
+    if last and now - last < cooldown:
+        remain = round(cooldown - (now - last), 1)
+        return {"passed": False, "message": f"请稍候 {remain}s", "stage": "cooldown"}
+
+    # ── 执行验证 ──
+    image = await read_image(file)
+    face_rows = face_service.detect_sface_rows(image)
+    if not face_rows:
+        haar_faces = face_service.detect_faces(image, allow_fallback=False)
+        if not haar_faces:
+            return {"passed": False, "message": "未检测到人脸", "stage": "detect"}
+        return {"passed": True, "message": "无法验证动作"}
+
+    largest = max(face_rows, key=lambda r: float(r[2] * r[3]))
+    HOLD_REQUIRED = 3
+    label_map = {"smile": "微笑", "turn_head": "转头", "open_mouth": "张嘴"}
+
+    # 转头用基线对比（防照片摇晃欺骗）
+    if challenge_action == "turn_head":
+        turn_passed, turn_msg = _check_turn_head_frame(session, largest)
+        if not turn_passed:
+            session["action_hold_count"] = 0
+            return {"passed": False, "message": turn_msg, "stage": "detect"}
+    else:
+        action_passed, action_msg = liveness_service.verify_action(image, challenge_action, largest)
+        if not action_passed:
+            session["action_hold_count"] = 0
+            return {"passed": False, "message": action_msg, "stage": "detect"}
+
+    # 动作触发 → 计数保持帧数
+    hold = session.get("action_hold_count", 0) + 1
+    session["action_hold_count"] = hold
+    label = label_map.get(challenge_action, "")
+
+    if hold < HOLD_REQUIRED:
+        return {"passed": False, "message": f"请保持{label} {hold}/{HOLD_REQUIRED}", "stage": "hold"}
+
+    # 保持足够帧数 → 动作通过
+    session["step"] = step + 1
+    session["action_hold_count"] = 0
+    session["last_step_at"] = now
+    if challenge_action == "turn_head":
+        session["turn_baseline"] = None
+    all_done = session["step"] >= len(actions)
+    if all_done:
+        session["completed"] = True
+    return {"passed": True, "message": f"{label}通过", "all_done": all_done}
+
+
+def _check_turn_head_frame(session: dict, face_row) -> tuple[bool, str]:
+    """转头帧级检查：对比鼻位与基线。首次调用记录基线；后续帧偏移超过阈值则判定触发。"""
+    _, _, w = int(face_row[0]), int(face_row[1]), int(face_row[2])
+    n_x = int(face_row[8])
+    nose_ratio = n_x / float(w or 1)
+
+    baseline = session.get("turn_baseline")
+    if baseline is None:
+        session["turn_baseline"] = nose_ratio
+        return False, "请左右转头"
+
+    if abs(nose_ratio - baseline) > 0.10:
+        return True, ""
+
+    return False, "请左右转头"
+>>>>>>> Stashed changes
 
 
 def _student_out(s):
@@ -227,11 +362,37 @@ async def check_in(
 # ── 活体挑战 / 设置 ─────────────────────────────────────
 
 @router.get("/liveness-challenge")
+<<<<<<< Updated upstream
 def liveness_challenge(_: User = Depends(get_current_user)):
     action = choice(LIVENESS_ACTIONS)
     if not LIVENESS_ENABLED:
         return {"enabled": False, "action": "disabled", "text": "活体检测已关闭", "expires_in": 0}
     return {"enabled": True, "action": action["code"], "text": action["text"], "expires_in": 15}
+=======
+def liveness_challenge(user: User = Depends(get_current_user)):
+    """返回 4-5 个随机挑战动作（允许重复但不允许相邻相同），前端按 step 依次验证。"""
+    if not LIVENESS_ENABLED:
+        _clean_session(user.id)
+        return {"enabled": False, "actions": [], "expires_in": 0}
+
+    num = _random.randint(4, 5)
+    selected = []
+    for _ in range(num):
+        pool = [a for a in LIVENESS_ACTIONS if not selected or a["code"] != selected[-1]["code"]]
+        selected.append(_random.choice(pool))
+
+    _verify_sessions[user.id] = {
+        "actions": selected,
+        "step": 0,
+        "turn_baseline": None,
+        "completed": False,
+        "expires_at": time() + 120,
+        "last_step_at": None,
+        "action_hold_count": 0,
+    }
+
+    return {"enabled": True, "actions": selected, "expires_in": 60}
+>>>>>>> Stashed changes
 
 
 @router.get("/liveness-settings")
